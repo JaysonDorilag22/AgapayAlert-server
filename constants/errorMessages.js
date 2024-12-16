@@ -1,0 +1,18 @@
+module.exports = {
+  USER_NOT_FOUND: 'User not found',
+  INVALID_CREDENTIALS: 'Invalid credentials',
+  SERVER_ERROR: 'Server error',
+  UNAUTHORIZED: 'Unauthorized access',
+  FORBIDDEN: 'Forbidden access',
+  BAD_REQUEST: 'Bad request',
+  NOT_FOUND: 'Resource not found',
+  METHOD_NOT_ALLOWED: 'Method not allowed',
+  CONFLICT: 'Conflict',
+  INTERNAL_SERVER_ERROR: 'Internal server error',
+  SERVICE_UNAVAILABLE: 'Service unavailable',
+  AVATAR_REQUIRED: 'Avatar is required',
+  USER_ALREADY_EXISTS: 'User already exists',
+  INVALID_EMAIL_OR_OTP: 'Invalid email or OTP',
+  INVALID_OR_EXPIRED_OTP: 'Invalid or expired OTP',
+  EMAIL_NOT_VERIFIED: 'Please verify your email first',
+};
