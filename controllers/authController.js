@@ -14,7 +14,7 @@ const uploadToCloudinary = require('../utils/uploadToCloudinary');
 
 dotenv.config();
 
-// Register a new user
+// Register
 exports.register = asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -22,7 +22,7 @@ exports.register = asyncHandler(async (req, res) => {
   }
 
   const { firstName, lastName, number, email, password, address } = req.body;
-  const file = req.file; // Assuming you're using multer to handle file uploads
+  const file = req.file; 
 
   if (!file) {
     return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.AVATAR_REQUIRED });
@@ -49,19 +49,15 @@ exports.register = asyncHandler(async (req, res) => {
     avatar,
   });
 
-  // Save user to database
   await user.save();
 
-  // Generate OTP and send email
   const otp = crypto.randomBytes(3).toString('hex');
   user.otp = otp;
   user.setOtpExpiration();
   await user.save();
 
-  // Create mail options
   const mailOptions = createMailOptions(user.email, 'Verify your email', 'otpEmail.ejs', { otp });
 
-  // Send OTP email
   await sendEmail(mailOptions);
 
   res.status(statusCodes.CREATED).json({ msg: 'User registered, please verify your email' });
@@ -127,7 +123,6 @@ exports.logout = (req, res) => {
   res.status(statusCodes.OK).json({ msg: 'Logged out successfully' });
 };
 
-
 // Forgot password
 exports.forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
@@ -138,16 +133,13 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
     return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.USER_NOT_FOUND });
   }
 
-  // Generate OTP and send email
   const otp = crypto.randomBytes(3).toString('hex');
   user.otp = otp;
   user.setOtpExpiration();
   await user.save();
 
-  // Create mail options
   const mailOptions = createMailOptions(user.email, 'Password Reset', 'otpEmail.ejs', { otp });
 
-  // Send OTP email
   await sendEmail(mailOptions);
 
   res.status(statusCodes.OK).json({ msg: 'Password reset OTP sent' });
