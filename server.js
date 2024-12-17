@@ -9,6 +9,7 @@ const path = require('path');
 
 //Routes
 const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
 
 dotenv.config();
 
@@ -38,6 +39,8 @@ app.post('/', (req, res) => {
 
 // Routes
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/user', userRoutes);
+
 
 // Error handler
 app.use(errorHandler)

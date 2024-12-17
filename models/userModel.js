@@ -1,5 +1,3 @@
-// filepath: /c:/Desktop/CAPSTONE/AgapayAlert-server/models/userModel.js
-
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
@@ -82,6 +80,20 @@ const UserSchema = new mongoose.Schema({
   },
   resetPasswordExpires: {
     type: Date,
+  },
+  preferredNotifications: {
+    sms: {
+      type: Boolean,
+      default: false,
+    },
+    push: {
+      type: Boolean,
+      default: true,
+    },
+    email: {
+      type: Boolean,
+      default: false,
+    },
   },
 }, { timestamps: true });
 

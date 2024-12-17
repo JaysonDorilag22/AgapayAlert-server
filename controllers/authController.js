@@ -9,6 +9,7 @@ const asyncHandler = require('express-async-handler');
 const dotenv = require('dotenv');
 const errorMessages = require('../constants/errorMessages');
 const statusCodes = require('../constants/statusCodes');
+const roles = require('../constants/roles');
 const uploadToCloudinary = require('../utils/uploadToCloudinary');
 
 dotenv.config();
@@ -95,7 +96,7 @@ exports.login = asyncHandler(async (req, res) => {
   const user = await User.findOne({ email });
 
   if (!user) {
-    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.INVALID_CREDENTIALS });
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.USER_NOT_FOUND });
   }
 
   const isMatch = await bcrypt.compare(password, user.password);
@@ -115,16 +116,9 @@ exports.login = asyncHandler(async (req, res) => {
     },
   };
 
-  const token = generateToken(payload);
+  generateToken(payload, res);
 
-  // Set token in cookie
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  });
-
-  res.json({ token });
+  res.json({ msg: 'Logged in successfully', user });
 });
 
 // Logout user
@@ -132,3 +126,51 @@ exports.logout = (req, res) => {
   res.clearCookie('token');
   res.status(statusCodes.OK).json({ msg: 'Logged out successfully' });
 };
+
+
+// Forgot password
+exports.forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.USER_NOT_FOUND });
+  }
+
+  // Generate OTP and send email
+  const otp = crypto.randomBytes(3).toString('hex');
+  user.otp = otp;
+  user.setOtpExpiration();
+  await user.save();
+
+  // Create mail options
+  const mailOptions = createMailOptions(user.email, 'Password Reset', 'otpEmail.ejs', { otp });
+
+  // Send OTP email
+  await sendEmail(mailOptions);
+
+  res.status(statusCodes.OK).json({ msg: 'Password reset OTP sent' });
+});
+
+// Reset password
+exports.resetPassword = asyncHandler(async (req, res) => {
+  const { email, otp, newPassword } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.INVALID_EMAIL_OR_OTP });
+  }
+
+  if (user.otp !== otp || user.otpExpires < Date.now()) {
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.INVALID_OR_EXPIRED_OTP });
+  }
+
+  user.password = newPassword;
+  user.otp = undefined;
+  user.otpExpires = undefined;
+  await user.save();
+
+  res.status(statusCodes.OK).json({ msg: 'Password reset successfully' });
+});
