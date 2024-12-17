@@ -101,3 +101,44 @@ exports.deleteUser = asyncHandler(async (req, res) => {
 
   res.status(statusCodes.OK).json({ msg: 'User deleted successfully' });
 });
+
+
+// Create a new user with a specific role
+exports.createUserWithRole = asyncHandler(async (req, res) => {
+  const { firstName, lastName, number, email, password, address, role } = req.body;
+  const file = req.file; // Assuming you're using multer to handle file uploads
+
+  let user = await User.findOne({ email });
+  if (user) {
+    return res.status(statusCodes.CONFLICT).json({ msg: errorMessages.USER_ALREADY_EXISTS });
+  }
+
+  let avatar = {
+    url: 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
+    public_id: 'default_avatar',
+  };
+
+  if (file) {
+    const uploadResult = await uploadToCloudinary(file.path, 'avatars');
+    avatar = {
+      url: uploadResult.url,
+      public_id: uploadResult.public_id,
+    };
+  }
+
+  user = new User({
+    firstName,
+    lastName,
+    number,
+    email,
+    password,
+    address,
+    roles: [role],
+    isVerified: true, // Set the user as verified by default
+    avatar,
+  });
+
+  await user.save();
+
+  res.status(statusCodes.CREATED).json(user);
+});

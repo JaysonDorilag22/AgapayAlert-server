@@ -10,6 +10,9 @@ const path = require('path');
 //Routes
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
+const reportRoutes = require('./routes/reportRoutes');
+const cityRoutes = require('./routes/cityRoutes');
+const policeStationRoutes = require('./routes/policeStationRoutes')
 
 dotenv.config();
 
@@ -40,6 +43,9 @@ app.post('/', (req, res) => {
 // Routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/user', userRoutes);
+app.use('/api/v1/report', reportRoutes);
+app.use('/api/v1/city', cityRoutes);
+app.use('/api/v1/police-station', policeStationRoutes)
 
 
 // Error handler
