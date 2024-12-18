@@ -1,18 +1,14 @@
 const Report = require('../models/reportModel');
-const User = require('../models/userModel');
 const PoliceStation = require('../models/policeStationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
 const errorMessages = require('../constants/errorMessages');
 const uploadToCloudinary = require('../utils/uploadToCloudinary');
+const { notifyPoliceStation } = require('../utils/notificationUtils');
 const cloudinary = require('cloudinary').v2;
-
 
 // Create a new report
 exports.createReport = asyncHandler(async (req, res) => {
-  console.log('Request Body:', req.body);
-  console.log('Request Files:', req.files);
-
   const { type, details, personInvolved, location, dateTime } = req.body;
   const reporter = req.user.id;
 
@@ -80,13 +76,22 @@ exports.createReport = asyncHandler(async (req, res) => {
 
   await report.save();
 
+  // Notify officers and admin of the assigned police station
+  if (nearestStation) {
+    await notifyPoliceStation(report, nearestStation);
+  }
+
   res.status(statusCodes.CREATED).json(report);
 });
 
 // Update a report
 exports.updateReport = asyncHandler(async (req, res) => {
   const { reportId } = req.params;
-  const { status, followUp, additionalImages } = req.body;
+  const { status, followUp } = req.body;
+
+  // Log the request body and files
+  console.log('Request Body:', req.body);
+  console.log('Request Files:', req.files);
 
   const report = await Report.findById(reportId);
 
@@ -99,10 +104,10 @@ exports.updateReport = asyncHandler(async (req, res) => {
   if (followUp) report.followUp = followUp;
 
   // Upload additional images to Cloudinary
-  if (additionalImages) {
-    for (const file of additionalImages) {
+  if (req.files && req.files.additionalImages) {
+    for (const file of req.files.additionalImages) {
       const uploadResult = await uploadToCloudinary(file.path, 'reports');
-      report.details.images.push({
+      report.additionalImages.push({
         url: uploadResult.url,
         public_id: uploadResult.public_id,
       });
@@ -152,7 +157,7 @@ exports.deleteReport = asyncHandler(async (req, res) => {
     await cloudinary.uploader.destroy(image.public_id);
   }
 
-  await report.remove();
+  await report.deleteOne();
 
   res.status(statusCodes.OK).json({ msg: 'Report deleted successfully' });
 });

@@ -1,4 +1,5 @@
 const User = require('../models/userModel');
+const PoliceStation = require('../models/policeStationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
 const errorMessages = require('../constants/errorMessages');
@@ -105,40 +106,58 @@ exports.deleteUser = asyncHandler(async (req, res) => {
 
 // Create a new user with a specific role
 exports.createUserWithRole = asyncHandler(async (req, res) => {
-  const { firstName, lastName, number, email, password, address, role } = req.body;
+  const { firstName, lastName, number, email, password, address, role, policeStationId } = req.body;
   const file = req.file; // Assuming you're using multer to handle file uploads
 
-  let user = await User.findOne({ email });
-  if (user) {
-    return res.status(statusCodes.CONFLICT).json({ msg: errorMessages.USER_ALREADY_EXISTS });
-  }
+  try {
+    let user = await User.findOne({ email });
+    if (user) {
+      console.log('User already exists:', email);
+      return res.status(statusCodes.CONFLICT).json({ msg: errorMessages.USER_ALREADY_EXISTS });
+    }
 
-  let avatar = {
-    url: 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
-    public_id: 'default_avatar',
-  };
-
-  if (file) {
-    const uploadResult = await uploadToCloudinary(file.path, 'avatars');
-    avatar = {
-      url: uploadResult.url,
-      public_id: uploadResult.public_id,
+    let avatar = {
+      url: 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
+      public_id: 'default_avatar',
     };
+
+    if (file) {
+      const uploadResult = await uploadToCloudinary(file.path, 'avatars');
+      avatar = {
+        url: uploadResult.url,
+        public_id: uploadResult.public_id,
+      };
+    }
+
+    // Check if police station exists
+    let policeStation = null;
+    if (role.includes('police_officer') || role.includes('police_admin')) {
+      policeStation = await PoliceStation.findById(policeStationId);
+      if (!policeStation) {
+        console.log('Police station not found:', policeStationId);
+        return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.POLICE_STATION_NOT_FOUND });
+      }
+    }
+
+    user = new User({
+      firstName,
+      lastName,
+      number,
+      email,
+      password,
+      address,
+      role,
+      policeStation: policeStation ? policeStation._id : null,
+      isVerified: true, // Set the user as verified by default
+      avatar,
+    });
+
+    await user.save();
+
+    console.log('User created successfully:', user);
+    res.status(statusCodes.CREATED).json(user);
+  } catch (error) {
+    console.error('Error creating user:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({ msg: 'Error creating user', error: error.message });
   }
-
-  user = new User({
-    firstName,
-    lastName,
-    number,
-    email,
-    password,
-    address,
-    roles: [role],
-    isVerified: true, // Set the user as verified by default
-    avatar,
-  });
-
-  await user.save();
-
-  res.status(statusCodes.CREATED).json(user);
 });

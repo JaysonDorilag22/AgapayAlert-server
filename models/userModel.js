@@ -66,6 +66,10 @@ const UserSchema = new mongoose.Schema(
         required: [true, 'ZIP code is required'],
       },
     },
+    policeStation: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'PoliceStation',
+    },
     isVerified: {
       type: Boolean,
       default: false,

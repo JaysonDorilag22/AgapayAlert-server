@@ -43,6 +43,10 @@ const reportSchema = new mongoose.Schema(
         ref: "PoliceStation", // Refers to the station handling the report
         required: true,
       },
+      assignedOfficer: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User", // Officer assigned to the case
+      },
       location: {
         type: {
           type: String,
@@ -66,6 +70,15 @@ const reportSchema = new mongoose.Schema(
         type: String,
         enum: ["Pending", "Assigned", "Under Investigation", "Resolved"],
         default: "Pending",
+      },
+      additionalImages: [
+        {
+          url: { type: String, required: true }, // Cloud-hosted image URL
+          public_id: { type: String, required: true }, // Public ID for cloud management
+        },
+      ],
+      followUp: {
+        type: String, // Follow-up notes or additional information
       },
     },
     { timestamps: true }

@@ -10,22 +10,21 @@ const upload = multer({ dest: 'uploads/' });
 
 const cpUpload = upload.fields([
   { name: 'images', maxCount: 10 },
-  { name: 'personInvolved[mostRecentPhoto]', maxCount: 1 }
+  { name: 'personInvolved[mostRecentPhoto]', maxCount: 1 },
+  { name: 'additionalImages', maxCount: 10 }
 ]);
 
-// Create a new report
-router.post('/', protect, authorizeRoles(roles.USER.role), cpUpload, reportController.createReport);
+// Middleware to log the fields being received
+router.use((req, res, next) => {
+  console.log('Received Fields:', Object.keys(req.body));
+  console.log('Received Files:', Object.keys(req.files || {}));
+  next();
+});
 
-// Update a report
-router.put('/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), upload.array('additionalImages'), reportController.updateReport);
-
-// Retrieve reports
-router.get('/', protect, authorizeRoles(roles.USER.role, roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role, roles.SUPER_ADMIN.role), reportController.getReports);
-
-// Delete a report
-router.delete('/:reportId', protect, authorizeRoles(roles.POLICE_ADMIN.role, roles.SUPER_ADMIN.role), reportController.deleteReport);
-
-// Assign a police station to a report
-router.post('/assign', protect, authorizeRoles(roles.POLICE_ADMIN.role, roles.SUPER_ADMIN.role), reportController.assignPoliceStation);
+router.post('/create', protect, cpUpload, reportController.createReport);
+router.put('/update/:reportId', protect, cpUpload, reportController.updateReport);
+router.get('/', protect, reportController.getReports);
+router.delete('/:reportId', protect, reportController.deleteReport);
+router.post('/assign', protect, reportController.assignPoliceStation);
 
 module.exports = router;
