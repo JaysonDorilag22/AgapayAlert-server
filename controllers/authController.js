@@ -85,6 +85,32 @@ exports.verifyAccount = asyncHandler(async (req, res) => {
   res.status(statusCodes.OK).json({ msg: 'Email verified successfully' });
 });
 
+// Resend verification email
+exports.resendVerification = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.USER_NOT_FOUND });
+  }
+
+  if (user.isVerified) {
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: 'Email is already verified' });
+  }
+
+  const otp = crypto.randomBytes(3).toString('hex');
+  user.otp = otp;
+  user.setOtpExpiration();
+  await user.save();
+
+  const mailOptions = createMailOptions(user.email, 'Verify your email', 'otpEmail.ejs', { otp });
+
+  await sendEmail(mailOptions);
+
+  res.status(statusCodes.OK).json({ msg: 'Verification email resent' });
+});
+
 // Login user
 exports.login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
@@ -143,6 +169,28 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
   await sendEmail(mailOptions);
 
   res.status(statusCodes.OK).json({ msg: 'Password reset OTP sent' });
+});
+
+// Resend OTP for forgot password
+exports.resendForgotPasswordOTP = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.USER_NOT_FOUND });
+  }
+
+  const otp = crypto.randomBytes(3).toString('hex');
+  user.otp = otp;
+  user.setOtpExpiration();
+  await user.save();
+
+  const mailOptions = createMailOptions(user.email, 'Password Reset', 'otpEmail.ejs', { otp });
+
+  await sendEmail(mailOptions);
+
+  res.status(statusCodes.OK).json({ msg: 'OTP resent for password reset' });
 });
 
 // Reset password

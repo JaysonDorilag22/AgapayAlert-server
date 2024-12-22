@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Report Broadcast</title>
+</head>
+<body>
+  <h1>New Report Broadcast</h1>
+  <p>A new report has been broadcasted. Here are the details:</p>
+  <ul>
+    <li><strong>Report ID:</strong> <%= reportId %></li>
+    <li><strong>Type:</strong> <%= reportType %></li>
+    <li><strong>Subject:</strong> <%= reportSubject %></li>
+    <li><strong>Description:</strong> <%= reportDescription %></li>
+  </ul>
+  <h2>Most Recent Photo</h2>
+  <img src="<%= mostRecentPhoto %>" alt="Most Recent Photo" style="max-width: 100%; height: auto;">
+</body>
+</html>

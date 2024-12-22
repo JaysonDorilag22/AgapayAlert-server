@@ -15,4 +15,5 @@ module.exports = {
   INVALID_EMAIL_OR_OTP: 'Invalid email or OTP',
   INVALID_OR_EXPIRED_OTP: 'Invalid or expired OTP',
   EMAIL_NOT_VERIFIED: 'Please verify your email first',
+  REPORT_NOT_FOUND: 'Report not found',
 };
