@@ -14,6 +14,44 @@ const uploadToCloudinary = require('../utils/uploadToCloudinary');
 
 dotenv.config();
 
+
+// Google Auth
+// Google Auth
+exports.googleAuth = asyncHandler(async (req, res) => {
+  const { email, firstName, lastName, avatar } = req.body;
+
+  try {
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // User exists, log in the user
+      const payload = {
+        user: {
+          id: user._id,
+          roles: user.roles,
+        },
+      };
+      const token = generateToken(payload, res);
+      console.log(token)
+      return res.json({ exists: true, user, token });
+    } else {
+      // User does not exist, return Google information for registration
+      return res.json({
+        exists: false,
+        user: {
+          email,
+          firstName,
+          lastName,
+          avatar,
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Error checking user:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Register
 exports.register = asyncHandler(async (req, res) => {
   const errors = validationResult(req);
@@ -145,8 +183,18 @@ exports.login = asyncHandler(async (req, res) => {
 
 // Logout user
 exports.logout = (req, res) => {
-  res.clearCookie('token');
-  res.status(statusCodes.OK).json({ msg: 'Logged out successfully' });
+  // Log the current cookies before clearing
+  console.log('Cookies before clearing:', req.cookies);
+
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+  });
+
+  // Log a message indicating the token has been cleared
+  console.log('Token cleared successfully');
+
+  res.status(statusCodes.OK).json({ msg: 'Logged out successfully', tokenCleared: true });
 };
 
 // Forgot password

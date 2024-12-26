@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const connectDB = require('./config/db');
 const dotenv = require('dotenv');
 const cookieParser = require('cookie-parser');
@@ -17,6 +18,7 @@ const policeStationRoutes = require('./routes/policeStationRoutes')
 dotenv.config();
 
 const app = express();
+app.use(cors());
 
 //connnect to database
 connectDB();
