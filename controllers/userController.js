@@ -77,7 +77,7 @@ exports.changePassword = asyncHandler(async (req, res) => {
   const isMatch = await bcrypt.compare(currentPassword, user.password);
 
   if (!isMatch) {
-    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.INVALID_CREDENTIALS });
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: 'Current password did not match' });
   }
 
   user.password = newPassword;

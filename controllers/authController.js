@@ -16,7 +16,6 @@ dotenv.config();
 
 
 // Google Auth
-// Google Auth
 exports.googleAuth = asyncHandler(async (req, res) => {
   const { email, firstName, lastName, avatar } = req.body;
 
@@ -166,7 +165,18 @@ exports.login = asyncHandler(async (req, res) => {
   }
 
   if (!user.isVerified) {
-    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.EMAIL_NOT_VERIFIED });
+    const otp = crypto.randomBytes(3).toString('hex');
+    user.otp = otp;
+    user.setOtpExpiration();
+    await user.save();
+
+    const mailOptions = createMailOptions(user.email, 'Verify your email', 'otpEmail.ejs', { otp });
+    await sendEmail(mailOptions);
+
+    return res.status(statusCodes.BAD_REQUEST).json({ 
+      msg: errorMessages.EMAIL_NOT_VERIFIED,
+      verificationSent: true 
+    });
   }
 
   const payload = {
@@ -175,7 +185,6 @@ exports.login = asyncHandler(async (req, res) => {
       roles: user.roles,
     },
   };
-
   generateToken(payload, res);
 
   res.json({ msg: 'Logged in successfully', user });
@@ -183,16 +192,12 @@ exports.login = asyncHandler(async (req, res) => {
 
 // Logout user
 exports.logout = (req, res) => {
-  // Log the current cookies before clearing
-  console.log('Cookies before clearing:', req.cookies);
 
   res.clearCookie('token', {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
   });
 
-  // Log a message indicating the token has been cleared
-  console.log('Token cleared successfully');
 
   res.status(statusCodes.OK).json({ msg: 'Logged out successfully', tokenCleared: true });
 };
