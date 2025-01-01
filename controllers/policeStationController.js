@@ -40,7 +40,6 @@ exports.createPoliceStation = asyncHandler(async (req, res) => {
       streetAddress: address.streetAddress,
       barangay: address.barangay,
       city: address.city,
-      province: address.province,
       zipCode: address.zipCode,
     },
     image,
@@ -101,7 +100,6 @@ exports.updatePoliceStation = asyncHandler(async (req, res) => {
       streetAddress: address.streetAddress,
       barangay: address.barangay,
       city: address.city,
-      province: address.province,
       zipCode: address.zipCode,
     };
   }

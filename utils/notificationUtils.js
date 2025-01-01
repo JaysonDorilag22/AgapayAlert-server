@@ -8,117 +8,120 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-/**
- * Send a OneSignal notification.
- * @param {string} message - The notification message.
- * @param {Array<string>} recipients - The OneSignal player IDs of the recipients.
- */
-const sendOneSignalNotification = async (message, recipients) => {
+const sendOneSignalNotification = async (message) => {
+  console.log('Preparing OneSignal notification:', { message });
+
   const notification = {
     app_id: process.env.ONESIGNAL_APP_ID,
-    include_player_ids: recipients,
+    included_segments: ["All"],
     contents: { en: message },
+    headings: { en: "AgapayAlert Notification" }
   };
 
   try {
-    const response = await oneSignalClient.createNotification(notification);
-    console.log('OneSignal response:', response.data);
+    console.log('Sending OneSignal request:', notification);
+    const response = await oneSignalClient.post('/notifications', notification);
+    console.log('OneSignal success:', response.data);
+    return { success: true, data: response.data };
   } catch (error) {
-    console.error('Error sending OneSignal notification:', error.response ? error.response.data : error.message);
-    throw new Error('Failed to send OneSignal notification');
+    console.error('OneSignal failed:', error.response?.data || error);
+    return { success: false, error: error.message };
   }
 };
 
-/**
- * Send an email notification.
- * @param {string} template - The path to the EJS template.
- * @param {Object} context - The context to pass to the EJS template.
- * @param {Array<string>} recipients - The email addresses of the recipients.
- */
 const sendEmailNotification = async (template, context, recipients) => {
   try {
     const templatePath = path.join(__dirname, '..', 'views', template);
-    const html = await ejs.renderFile(templatePath, context);
+    const html = await ejs.renderFile(templatePath, {
+      reportId: context.reportId || 'N/A',
+      reportType: context.reportType || 'N/A',
+      personName: context.personName || 'N/A',
+      lastSeenDate: context.lastSeenDate ? new Date(context.lastSeenDate).toLocaleDateString() : 'N/A',
+      lastKnownLocation: context.lastKnownLocation || 'N/A',
+      reportAddress: context.reportAddress || 'N/A'
+    });
 
     const mailOptions = {
-      from: 'no-reply@yourapp.com',
+      from: process.env.SMTP_FROM_EMAIL,
       to: recipients,
-      subject: 'New Report Assigned',
+      subject: `New ${context.reportType} Report Assigned`,
       html: html,
     };
 
-    await transporter.sendMail(mailOptions);
-    console.log('Email sent successfully');
+    const result = await transporter.sendMail(mailOptions);
+    console.log('Email sent:', { recipients, messageId: result.messageId });
+    return { success: true };
   } catch (error) {
-    console.error('Error sending email:', error);
-    throw new Error('Failed to send email');
+    console.error('Email failed:', error);
+    return { success: false, error: error.message };
   }
 };
 
-/**
- * Notify the officers and admin of a police station about a new report.
- * @param {Object} report - The report object.
- * @param {Object} nearestStation - The nearest police station object.
- */
 const notifyPoliceStation = async (report, nearestStation) => {
-  try {
-    const officers = await User.find({ policeStation: nearestStation._id, roles: roles.POLICE_OFFICER.role });
-    const admin = await User.findOne({ policeStation: nearestStation._id, roles: roles.POLICE_ADMIN.role });
+  let notificationResults = { oneSignal: false, email: false };
 
-    console.log('Officers found:', officers);
-    console.log('Admin found:', admin);
+  try {
+    // Get station personnel
+    const [officers, admin] = await Promise.all([
+      User.find({ 
+        policeStation: nearestStation._id, 
+        roles: roles.POLICE_OFFICER.role 
+      }),
+      User.findOne({ 
+        policeStation: nearestStation._id, 
+        roles: roles.POLICE_ADMIN.role 
+      })
+    ]);
+
+    console.log('Found recipients:', {
+      officersCount: officers.length,
+      hasAdmin: !!admin
+    });
 
     if (!admin) {
-      console.error('Admin not found for police station:', nearestStation._id);
-      throw new Error('Admin not found for police station');
+      console.warn('No admin found for station:', nearestStation._id);
     }
 
-    const notificationMessage = `A new report has been created and assigned to your police station. Report ID: ${report._id}`;
+    // Prepare notification message
+    const notificationMessage = `New ${report.type} Report: ${report.personInvolved.firstName} ${report.personInvolved.lastName} was reported ${report.type.toLowerCase()} at ${report.location.address.barangay}, ${report.location.address.city}`;
 
-    // Send OneSignal notifications
-    const notificationRecipients = officers.map(officer => officer.oneSignalPlayerId).concat(admin.oneSignalPlayerId);
-    console.log('Notification recipients:', notificationRecipients);
+    // Send OneSignal notification
+    const oneSignalResult = await sendOneSignalNotification(notificationMessage);
+    notificationResults.oneSignal = oneSignalResult.success;
 
-    if (notificationRecipients.includes(undefined)) {
-      console.error('OneSignal player ID is missing for some users. Falling back to email notifications.');
-      
-      // Send email notifications as a fallback
-      const emailRecipients = officers.map(officer => officer.email).concat(admin.email);
-      console.log('Email recipients:', emailRecipients);
+    // Send email notifications
+    const emailRecipients = officers.map(o => o.email);
+    if (admin) emailRecipients.push(admin.email);
+
+    if (emailRecipients.length > 0) {
       const emailContext = {
         reportId: report._id,
         reportType: report.type,
-        reportSubject: report.details.subject,
-        reportDescription: report.details.description,
+        personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+        lastSeenDate: report.personInvolved.lastSeenDate,
+        lastKnownLocation: report.personInvolved.lastKnownLocation,
+        reportAddress: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`
       };
-      await sendEmailNotification('newReportNotificationEmail.ejs', emailContext, emailRecipients);
-    } else {
-      try {
-        await sendOneSignalNotification(notificationMessage, notificationRecipients);
-      } catch (oneSignalError) {
-        console.error('OneSignal notification failed:', oneSignalError.response ? oneSignalError.response.data : oneSignalError.message);
-        console.log('Attempting to send email notification as a fallback.');
 
-        // Send email notifications as a fallback
-        const emailRecipients = officers.map(officer => officer.email).concat(admin.email);
-        console.log('Email recipients:', emailRecipients);
-        const emailContext = {
-          reportId: report._id,
-          reportType: report.type,
-          reportSubject: report.details.subject,
-          reportDescription: report.details.description,
-        };
-        await sendEmailNotification('newReportNotificationEmail.ejs', emailContext, emailRecipients);
-      }
+      const emailResult = await sendEmailNotification(
+        'newReportNotificationEmail.ejs', 
+        emailContext, 
+        emailRecipients
+      );
+      notificationResults.email = emailResult.success;
     }
+
+    console.log('Notification results:', notificationResults);
+    return notificationResults;
+
   } catch (error) {
-    console.error('Error notifying police station:', error);
-    throw new Error('Failed to notify police station');
+    console.error('Notification error:', error);
+    return notificationResults;
   }
 };
 
 module.exports = {
   sendOneSignalNotification,
   sendEmailNotification,
-  notifyPoliceStation,
+  notifyPoliceStation
 };

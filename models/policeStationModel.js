@@ -31,10 +31,6 @@ const policeStationSchema = new mongoose.Schema({
       type: String,
       required: [true, 'City is required'],
     },
-    province: {
-      type: String,
-      required: [true, 'Province is required'],
-    },
     zipCode: {
       type: String,
       required: [true, 'ZIP code is required'],
