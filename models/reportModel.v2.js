@@ -2,20 +2,17 @@ const mongoose = require("mongoose");
 
 const reportSchema = new mongoose.Schema(
   {
-    // Modal 1: Basic Information (Display the user(reporter) current login for checking credentials)
     reporter: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: [true, "Reporter is required"],
     },
 
-    // Modal 2: Choose what type of incident
     type: {
       type: String,
       enum: ["Missing", "Abducted", "Kidnapped", "Hit-and-Run"],
       required: [true, "Report type is required"],
     },
-    // Modal 3: Information about the person involved in the incident (ALL REQUIRED EXCEPT ALIAS)
     personInvolved: {
       mostRecentPhoto: {
         url: {
@@ -47,12 +44,15 @@ const reportSchema = new mongoose.Schema(
         type: Date,
         required: [true, "Last seen date is required"],
       },
+      lastSeentime: {
+        type: String,
+        required: [true, "Time is required"],
+      },
       lastKnownLocation: {
         type: String,
         required: [true, "Last known location is required"],
       },
 
-      // Modal 4: Physical description (OPTIONAL BUT HIGHLY RECOMMENDED)
       gender: { type: String },
       race: { type: String },
       height: { type: String },
@@ -61,7 +61,6 @@ const reportSchema = new mongoose.Schema(
       scarsMarksTattoos: { type: String },
       hairColor: { type: String },
 
-      // Medical and identifying features (OPTIONAL BUT HIGHLY RECOMMENDED)
       birthDefects: { type: String },
       prosthetics: { type: String },
       bloodType: { type: String },
@@ -85,7 +84,6 @@ const reportSchema = new mongoose.Schema(
       },
     ],
 
-    // Modal 5: Location details (Incident location, not reporter’s location)
     location: {
       type: {
         type: String,
@@ -107,14 +105,12 @@ const reportSchema = new mongoose.Schema(
       },
     },
 
-    // Modal 6: Case assignment information (Assigned police station or nearest one automatically assigned)
     assignedPoliceStation: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "PoliceStation",
       required: [true, "Assigned police station is required"],
     },
 
-    // Case status and follow-up (For police officers only)
     status: {
       type: String,
       enum: ["Pending", "Assigned", "Under Investigation", "Resolved"],
@@ -125,10 +121,9 @@ const reportSchema = new mongoose.Schema(
       type: String,
     },
 
-    // Broadcasting consent (User can approve or deny)
     broadcastConsent: {
       type: Boolean,
-      default: false, // Default is no consent
+      default: false, 
       required: [true, "Broadcast consent is required"],
     },
 

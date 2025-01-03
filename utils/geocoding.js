@@ -2,49 +2,59 @@ const axios = require('axios');
 
 async function getCoordinatesFromAddress(address) {
   try {
-    // Validate address object
-    const requiredFields = ['streetAddress', 'barangay', 'city', 'zipCode'];
-    for (const field of requiredFields) {
-      if (!address[field]) {
+    // Try different combinations of address components
+    const addressCombinations = [
+      // Full address
+      {
+        street: address.streetAddress,
+        city: `${address.barangay}, ${address.city}`,
+        postalcode: address.zipCode,
+      },
+      // Without street
+      {
+        city: `${address.barangay}, ${address.city}`,
+        postalcode: address.zipCode,
+      },
+      // Just city and barangay
+      {
+        city: `${address.barangay}, ${address.city}`,
+      },
+      // City only
+      {
+        city: address.city,
+      }
+    ];
+
+    // Try each combination until we get coordinates
+    for (const addressParts of addressCombinations) {
+      const params = new URLSearchParams({
+        format: 'json',
+        country: 'PH',
+        ...addressParts
+      });
+
+      const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
+      console.log('Trying geocoding with:', url);
+      
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'AgapayAlert/1.0'
+        }
+      });
+
+      if (response.data && response.data.length > 0) {
+        const coordinates = [
+          parseFloat(response.data[0].lon),
+          parseFloat(response.data[0].lat)
+        ];
+
         return {
-          success: false,
-          message: `Missing required field: ${field}`,
-          coordinates: null
+          success: true,
+          coordinates,
+          displayName: response.data[0].display_name,
+          addressUsed: Object.values(addressParts).join(', ')
         };
       }
-    }
-
-    // Build structured parameters
-    const params = new URLSearchParams({
-      format: 'json',
-      street: address.streetAddress,
-      city: `${address.barangay}, ${address.city}`,
-      postalcode: address.zipCode,
-      country: 'PH'
-    });
-
-    // Make API request
-    const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
-    console.log('Geocoding request:', url);
-    
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'AgapayAlert/1.0'
-      }
-    });
-
-    if (response.data && response.data.length > 0) {
-      const coordinates = [
-        parseFloat(response.data[0].lon),
-        parseFloat(response.data[0].lat)
-      ];
-
-      return {
-        success: true,
-        coordinates,
-        displayName: response.data[0].display_name,
-        addressUsed: `${address.streetAddress}, ${address.barangay}, ${address.city}, ${address.zipCode}`
-      };
     }
 
     return {

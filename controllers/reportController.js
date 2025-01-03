@@ -74,6 +74,19 @@ exports.createReport = asyncHandler(async (req, res) => {
     const photoFile = req.files['personInvolved[mostRecentPhoto]'][0];
     const photoResult = await uploadToCloudinary(photoFile.path, 'reports');
     
+    // Handle additional images
+    let additionalImages = [];
+    if (req.files?.additionalImages) {
+      const uploadPromises = req.files.additionalImages.map(file => 
+        uploadToCloudinary(file.path, 'reports')
+      );
+      const uploadResults = await Promise.all(uploadPromises);
+      additionalImages = uploadResults.map(result => ({
+        url: result.url,
+        public_id: result.public_id
+      }));
+    }
+
     // Find police station based on selection or location
     let assignedStation = await findPoliceStation(selectedPoliceStation, geoData.coordinates);
 
@@ -94,6 +107,7 @@ exports.createReport = asyncHandler(async (req, res) => {
           public_id: photoResult.public_id
         }
       },
+      additionalImages,
       location: {
         type: 'Point',
         coordinates: geoData.coordinates,
