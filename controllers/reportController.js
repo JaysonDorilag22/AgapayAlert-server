@@ -1,4 +1,4 @@
-const Report = require('../models/reportModel.v2');
+const Report = require('../models/reportModel');
 const PoliceStation = require('../models/policeStationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
