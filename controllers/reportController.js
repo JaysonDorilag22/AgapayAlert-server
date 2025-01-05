@@ -120,11 +120,11 @@ exports.createReport = asyncHandler(async (req, res) => {
     await report.save();
 
     // Handle notifications
-    try {
-      await notifyPoliceStation(report, assignedStation);
-    } catch (notificationError) {
-      console.error('Notification failed but report was saved:', notificationError);
-    }
+    // try {
+    //   await notifyPoliceStation(report, assignedStation);
+    // } catch (notificationError) {
+    //   console.error('Notification failed but report was saved:', notificationError);
+    // }
 
     res.status(statusCodes.CREATED).json({
       msg: 'Report created successfully',
@@ -409,3 +409,165 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
   res.status(statusCodes.OK).json(report);
 });
 
+
+exports.getPublicFeed = asyncHandler(async (req, res) => {
+  try {
+    const { page = 1, limit = 10, city, type } = req.query;
+    const currentPage = parseInt(page);
+    const limitPerPage = parseInt(limit);
+
+    // Base query for public reports
+    let query = { 
+      broadcastConsent: true,
+      status: { $ne: 'Resolved' }
+    };
+
+    // Add city filter if provided
+    if (city) {
+      query['location.address.city'] = city;
+    }
+
+    // Add type filter if provided and valid
+    if (type && ["Missing", "Abducted", "Kidnapped", "Hit-and-Run"].includes(type)) {
+      query.type = type;
+    }
+
+    const reports = await Report.find(query)
+      .select({
+        type: 1,
+        'personInvolved.firstName': 1,
+        'personInvolved.lastName': 1,
+        'personInvolved.age': 1,
+        'personInvolved.lastSeenDate': 1,
+        'personInvolved.lastSeentime': 1,
+        'personInvolved.lastKnownLocation': 1,
+        'personInvolved.mostRecentPhoto': 1,
+        'location.address.city': 1,
+        createdAt: 1
+      })
+      .sort('-createdAt')
+      .skip((currentPage - 1) * limitPerPage)
+      .limit(limitPerPage);
+
+    const total = await Report.countDocuments(query);
+
+    const feedReports = reports.map(report => ({
+      id: report._id,
+      type: report.type,
+      personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+      age: report.personInvolved.age,
+      lastSeen: {
+        date: report.personInvolved.lastSeenDate,
+        time: report.personInvolved.lastSeentime
+      },
+      lastKnownLocation: report.personInvolved.lastKnownLocation,
+      city: report.location.address.city,
+      photo: report.personInvolved.mostRecentPhoto.url,
+      reportedAt: report.createdAt
+    }));
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        reports: feedReports,
+        currentPage,
+        totalPages: Math.ceil(total / limitPerPage),
+        totalReports: total,
+        hasMore: currentPage * limitPerPage < total
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting public feed:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error retrieving public feed',
+      error: error.message
+    });
+  }
+});
+
+// Get distinct cities with active reports that have broadcast consent
+exports.getReportCities = asyncHandler(async (req, res) => {
+  try {
+    const cities = await Report.distinct('location.address.city', {
+      broadcastConsent: true,
+      status: { $ne: 'Resolved' }
+    });
+
+    const sortedCities = cities
+      .filter(city => city)
+      .sort((a, b) => a.localeCompare(b));
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        cities: sortedCities,
+        total: sortedCities.length
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching report cities:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error retrieving cities',
+      error: error.message
+    });
+  }
+});
+
+
+// Get User's Reports
+exports.getUserReports = asyncHandler(async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status, type } = req.query;
+    const currentPage = parseInt(page);
+    const limitPerPage = parseInt(limit);
+
+    // Base query - get reports where user is reporter
+    let query = { reporter: req.user.id };
+
+    // Add filters if provided
+    if (status) query.status = status;
+    if (type) query.type = type;
+
+    const reports = await Report.find(query)
+      .select({
+        type: 1,
+        'personInvolved.firstName': 1,
+        'personInvolved.lastName': 1,
+        'personInvolved.age': 1,
+        'personInvolved.lastSeenDate': 1,
+        'personInvolved.mostRecentPhoto': 1,
+        'location.address': 1,
+        status: 1,
+        broadcastConsent: 1,
+        createdAt: 1
+      })
+      .populate('assignedPoliceStation', 'name address')
+      .sort('-createdAt')
+      .skip((currentPage - 1) * limitPerPage)
+      .limit(limitPerPage);
+
+    const total = await Report.countDocuments(query);
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        reports,
+        currentPage,
+        totalPages: Math.ceil(total / limitPerPage),
+        totalReports: total,
+        hasMore: currentPage * limitPerPage < total
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting user reports:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error retrieving user reports',
+      error: error.message
+    });
+  }
+});

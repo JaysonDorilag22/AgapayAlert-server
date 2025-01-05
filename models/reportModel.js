@@ -140,4 +140,8 @@ const reportSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+reportSchema.index({ 'location.address.city': 1 });
+reportSchema.index({ broadcastConsent: 1 });
+reportSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model("Report", reportSchema);
