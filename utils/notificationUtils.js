@@ -8,20 +8,19 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const sendOneSignalNotification = async (message) => {
-  console.log('Preparing OneSignal notification:', { message });
-
+const sendOneSignalNotification = async (notificationData) => {
   const notification = {
     app_id: process.env.ONESIGNAL_APP_ID,
     included_segments: ["All"],
-    contents: { en: message },
-    headings: { en: "AgapayAlert Notification" }
+    contents: { 
+      en: notificationData.message 
+    },
+    headings: { en: "AgapayAlert Notification" },
+    data: notificationData.data
   };
 
   try {
-    console.log('Sending OneSignal request:', notification);
     const response = await oneSignalClient.post('/notifications', notification);
-    console.log('OneSignal success:', response.data);
     return { success: true, data: response.data };
   } catch (error) {
     console.error('OneSignal failed:', error.response?.data || error);
@@ -32,19 +31,14 @@ const sendOneSignalNotification = async (message) => {
 const sendEmailNotification = async (template, context, recipients) => {
   try {
     const templatePath = path.join(__dirname, '..', 'views', template);
-    const html = await ejs.renderFile(templatePath, {
-      reportId: context.reportId || 'N/A',
-      reportType: context.reportType || 'N/A',
-      personName: context.personName || 'N/A',
-      lastSeenDate: context.lastSeenDate ? new Date(context.lastSeenDate).toLocaleDateString() : 'N/A',
-      lastKnownLocation: context.lastKnownLocation || 'N/A',
-      reportAddress: context.reportAddress || 'N/A'
-    });
+    const html = await ejs.renderFile(templatePath, context);
 
     const mailOptions = {
       from: process.env.SMTP_FROM_EMAIL,
       to: recipients,
-      subject: `New ${context.reportType} Report Assigned`,
+      subject: template.includes('finder') ? 
+        `New Finder Report Alert - ${context.reportType} Case` : 
+        `New ${context.reportType} Report Alert`,
       html: html,
     };
 
@@ -120,8 +114,84 @@ const notifyPoliceStation = async (report, nearestStation) => {
   }
 };
 
+
+const notifyFinderReport = async (finderReport, originalReport, assignedStation, notificationData) => {
+  let notificationResults = { oneSignal: false, email: false };
+
+  try {
+    console.log('Finder Report Data:', {
+      dateAndTime: finderReport.discoveryDetails.dateAndTime,
+      location: finderReport.discoveryDetails.location,
+      personCondition: finderReport.personCondition,
+      images: finderReport.images
+    });
+
+    console.log('Original Report Data:', {
+      type: originalReport.type,
+      person: originalReport.personInvolved
+    });
+
+    console.log('Notification Data:', notificationData);
+
+    const [officers, admin] = await Promise.all([
+      User.find({ 
+        policeStation: assignedStation._id, 
+        roles: roles.POLICE_OFFICER.role 
+      }),
+      User.findOne({ 
+        policeStation: assignedStation._id, 
+        roles: roles.POLICE_ADMIN.role 
+      })
+    ]);
+
+    // Send OneSignal notification
+    const oneSignalResult = await sendOneSignalNotification({
+      message: notificationData.message,
+      data: notificationData.data
+    });
+    notificationResults.oneSignal = oneSignalResult.success;
+
+    // Send email notifications
+    const emailRecipients = officers.map(o => o.email);
+    if (admin) emailRecipients.push(admin.email);
+
+    if (emailRecipients.length > 0) {
+      // Map data with proper checks
+      const emailContext = {
+        reportType: originalReport.type || 'Not specified',
+        personName: `${originalReport.personInvolved.firstName} ${originalReport.personInvolved.lastName}`,
+        discoveryDate: finderReport.discoveryDetails.dateAndTime,
+        discoveryLocation: finderReport.discoveryDetails.location.address ? 
+          `${finderReport.discoveryDetails.location.address.streetAddress}, ${finderReport.discoveryDetails.location.address.barangay}, ${finderReport.discoveryDetails.location.address.city}` : 
+          'Not specified',
+        personCondition: finderReport.personCondition || {},
+        notes: finderReport.personCondition?.notes || '',
+        finderReportId: finderReport._id?.toString() || 'Not available',
+        originalReportId: originalReport._id?.toString() || 'Not available',
+        authoritiesNotified: !!finderReport.authoritiesNotified,
+        images: finderReport.images || []
+      };
+
+      console.log('Email Context Before Sending:', emailContext);
+
+      const emailResult = await sendEmailNotification(
+        'finderReportNotificationEmail.ejs',
+        emailContext,
+        emailRecipients
+      );
+      notificationResults.email = emailResult.success;
+    }
+
+    return notificationResults;
+  } catch (error) {
+    console.error('Finder Report Notification error:', error);
+    return notificationResults;
+  }
+};
+
 module.exports = {
   sendOneSignalNotification,
   sendEmailNotification,
-  notifyPoliceStation
+  notifyPoliceStation,
+  notifyFinderReport
 };
