@@ -44,6 +44,153 @@ const getRoleBasedQuery = async (user, baseQuery = {}) => {
     }
   };
 
+
+  // Get Basic Analytics
+exports.getBasicAnalytics = asyncHandler(async (req, res) => {
+    try {
+      const query = await getRoleBasedQuery(req.user);
+      
+      const analytics = await Promise.all([
+        // Total Reports
+        Report.countDocuments(query),
+  
+        // Reports by Type
+        Report.aggregate([
+          { $match: query },
+          { $group: {
+            _id: '$type',
+            count: { $sum: 1 }
+          }}
+        ]),
+  
+        // Reports by Status
+        Report.aggregate([
+          { $match: query },
+          { $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }}
+        ]),
+  
+        // Today's Reports
+        Report.countDocuments({
+          ...query,
+          createdAt: {
+            $gte: new Date(new Date().setHours(0, 0, 0)),
+            $lt: new Date(new Date().setHours(23, 59, 59))
+          }
+        }),
+  
+        // This Week's Reports
+        Report.countDocuments({
+          ...query,
+          createdAt: {
+            $gte: new Date(new Date().setDate(new Date().getDate() - 7)),
+            $lt: new Date()
+          }
+        }),
+  
+        // Resolution Rate
+        Report.aggregate([
+          { $match: query },
+          { $group: {
+            _id: null,
+            total: { $sum: 1 },
+            resolved: {
+              $sum: { $cond: [{ $eq: ['$status', 'Resolved'] }, 1, 0] }
+            }
+          }}
+        ]),
+  
+        // Average Response Time (in hours)
+        Report.aggregate([
+          { 
+            $match: { 
+              ...query,
+              status: 'Resolved'
+            } 
+          },
+          { 
+            $project: {
+              responseTime: {
+                $divide: [
+                  { $subtract: ['$updatedAt', '$createdAt'] },
+                  3600000 // Convert to hours
+                ]
+              }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              averageTime: { $avg: '$responseTime' }
+            }
+          }
+        ])
+      ]);
+  
+      const [
+        totalReports,
+        reportsByType,
+        reportsByStatus,
+        todayReports,
+        weeklyReports,
+        resolutionRate,
+        responseTime
+      ] = analytics;
+  
+      // Calculate percentages and format data
+      const resolvedPercentage = resolutionRate[0] 
+        ? Math.round((resolutionRate[0].resolved / resolutionRate[0].total) * 100) 
+        : 0;
+  
+      const averageResponseTime = responseTime[0]
+        ? Math.round(responseTime[0].averageTime)
+        : 0;
+  
+      // Format type distribution
+      const typeDistribution = reportsByType.reduce((acc, curr) => {
+        acc[curr._id] = curr.count;
+        return acc;
+      }, {});
+  
+      // Format status distribution
+      const statusDistribution = reportsByStatus.reduce((acc, curr) => {
+        acc[curr._id] = curr.count;
+        return acc;
+      }, {});
+  
+      res.status(statusCodes.OK).json({
+        success: true,
+        data: {
+          overview: {
+            total: totalReports,
+            today: todayReports,
+            thisWeek: weeklyReports,
+            resolutionRate: `${resolvedPercentage}%`,
+            averageResponseTime: `${averageResponseTime} hours`
+          },
+          distribution: {
+            byType: typeDistribution,
+            byStatus: statusDistribution
+          },
+          performance: {
+            resolved: resolutionRate[0]?.resolved || 0,
+            pending: statusDistribution['Pending'] || 0,
+            inProgress: statusDistribution['Under Investigation'] || 0
+          }
+        }
+      });
+  
+    } catch (error) {
+      console.error('Error in getBasicAnalytics:', error);
+      res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
+
 // Type Distribution Chart
 exports.getTypeDistribution = asyncHandler(async (req, res) => {
   try {
