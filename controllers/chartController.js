@@ -151,37 +151,116 @@ exports.getMonthlyTrend = asyncHandler(async (req, res) => {
   }
 });
 
-// Location Hotspots Chart
+// Location Hotspots Chart with Predictive Analysis
 exports.getLocationHotspots = asyncHandler(async (req, res) => {
-  try {
-    const query = await getRoleBasedQuery(req.user);
-    const data = await Report.aggregate([
-      { $match: query },
-      { $group: {
-        _id: '$location.address.barangay',
-        count: { $sum: 1 }
-      }},
-      { $sort: { count: -1 } },
-      { $limit: 10 }
-    ]);
-
-    res.status(statusCodes.OK).json({
-      success: true,
-      data: {
-        labels: data.map(item => item._id),
-        datasets: [{
-          label: 'Reports by Location',
-          data: data.map(item => item.count),
-          backgroundColor: '#36A2EB'
-        }]
-      }
-    });
-  } catch (error) {
-    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+    try {
+      const query = await getRoleBasedQuery(req.user);
+      
+      // Get historical data by barangay and time
+      const historicalData = await Report.aggregate([
+        { $match: query },
+        { 
+          $group: {
+            _id: {
+              barangay: '$location.address.barangay',
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1 } }
+      ]);
+  
+      // Process data for each barangay
+      const barangayStats = {};
+      historicalData.forEach(entry => {
+        const barangay = entry._id.barangay;
+        if (!barangayStats[barangay]) {
+          barangayStats[barangay] = {
+            totalIncidents: 0,
+            monthlyData: [],
+            trend: 0
+          };
+        }
+        
+        barangayStats[barangay].totalIncidents += entry.count;
+        barangayStats[barangay].monthlyData.push(entry.count);
+      });
+  
+      // Calculate trends and predictions
+      Object.keys(barangayStats).forEach(barangay => {
+        const stats = barangayStats[barangay];
+        const monthlyData = stats.monthlyData;
+        
+        // Calculate trend (simple linear regression)
+        if (monthlyData.length > 1) {
+          const n = monthlyData.length;
+          let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+          
+          monthlyData.forEach((count, index) => {
+            sumX += index;
+            sumY += count;
+            sumXY += index * count;
+            sumXX += index * index;
+          });
+  
+          const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+          stats.trend = slope;
+  
+          // Predict next month's incidents
+          stats.prediction = Math.max(0, Math.round(
+            monthlyData[monthlyData.length - 1] + slope
+          ));
+        }
+  
+        // Calculate risk score (0-100)
+        const maxIncidents = Math.max(...Object.values(barangayStats).map(s => s.totalIncidents));
+        stats.riskScore = Math.round((stats.totalIncidents / maxIncidents) * 100);
+      });
+  
+      // Sort barangays by risk score
+      const sortedBarangays = Object.entries(barangayStats)
+        .sort((a, b) => b[1].riskScore - a[1].riskScore)
+        .slice(0, 10);
+  
+      res.status(statusCodes.OK).json({
+        success: true,
+        data: {
+          current: {
+            labels: sortedBarangays.map(([barangay]) => barangay),
+            datasets: [{
+              label: 'Current Incidents',
+              data: sortedBarangays.map(([_, stats]) => stats.totalIncidents),
+              backgroundColor: '#36A2EB'
+            }]
+          },
+          predictions: {
+            labels: sortedBarangays.map(([barangay]) => barangay),
+            datasets: [{
+              label: 'Predicted Next Month',
+              data: sortedBarangays.map(([_, stats]) => stats.prediction || 0),
+              backgroundColor: '#FF6384'
+            }]
+          },
+          analysis: sortedBarangays.map(([barangay, stats]) => ({
+            barangay,
+            currentIncidents: stats.totalIncidents,
+            predictedNextMonth: stats.prediction || 0,
+            riskScore: stats.riskScore,
+            trend: stats.trend > 0 ? 'Increasing' : stats.trend < 0 ? 'Decreasing' : 'Stable',
+            riskLevel: stats.riskScore >= 75 ? 'High' : stats.riskScore >= 50 ? 'Medium' : 'Low'
+          }))
+        }
+      });
+  
+    } catch (error) {
+      console.error('Error in getLocationHotspots:', error);
+      res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
 
 module.exports = exports;
