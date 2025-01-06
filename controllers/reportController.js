@@ -1,4 +1,6 @@
 const Report = require('../models/reportModel');
+const Notification = require('../models/notificationModel');
+const User = require('../models/userModel');
 const PoliceStation = require('../models/policeStationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
@@ -56,17 +58,27 @@ exports.createReport = asyncHandler(async (req, res) => {
       broadcastConsent 
     } = req.body;
 
+    // Validate input
+    if (!type || !personInvolved || !location) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Missing required fields'
+      });
+    }
+
     // Get coordinates from address
     const geoData = await getCoordinatesFromAddress(location.address);
     if (!geoData.success) {
       return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
         msg: geoData.message
       });
     }
 
-    // Upload most recent photo
+    // Handle photo upload
     if (!req.files?.['personInvolved[mostRecentPhoto]']) {
       return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
         msg: 'Most recent photo is required'
       });
     }
@@ -87,11 +99,11 @@ exports.createReport = asyncHandler(async (req, res) => {
       }));
     }
 
-    // Find police station based on selection or location
+    // Find police station
     let assignedStation = await findPoliceStation(selectedPoliceStation, geoData.coordinates);
-
     if (!assignedStation) {
       return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
         msg: 'No police stations found in the system'
       });
     }
@@ -120,23 +132,37 @@ exports.createReport = asyncHandler(async (req, res) => {
     await report.save();
 
     // Handle notifications
-    // try {
-    //   await notifyPoliceStation(report, assignedStation);
-    // } catch (notificationError) {
-    //   console.error('Notification failed but report was saved:', notificationError);
-    // }
+    try {
+      // await notifyPoliceStation(report, assignedStation);
+      
+      // Notify reporter
+      await Notification.create({
+        recipient: req.user.id,
+        type: 'REPORT_CREATED',
+        title: 'Report Created',
+        message: `Your ${type} report has been created and assigned to ${assignedStation.name}`,
+        data: {
+          reportId: report._id
+        }
+      });
+    } catch (notificationError) {
+      console.error('Notification failed:', notificationError);
+    }
 
     res.status(statusCodes.CREATED).json({
+      success: true,
       msg: 'Report created successfully',
-      report,
-      assignedStation,
-      assignmentType: selectedPoliceStation ? 'Manual Selection' : 'Automatic Assignment',
-      notificationStatus: 'Report saved successfully. Notifications may have failed.'
+      data: {
+        report,
+        assignedStation,
+        assignmentType: selectedPoliceStation ? 'Manual Selection' : 'Automatic Assignment'
+      }
     });
 
   } catch (error) {
     console.error('Error in createReport:', error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
       msg: 'Error creating report',
       error: error.message
     });
@@ -184,35 +210,117 @@ exports.updateReport = asyncHandler(async (req, res) => {
   const { status, followUp } = req.body;
   const isOfficer = req.user.roles.includes('police');
 
+  // Validate officer access
   if (!isOfficer) {
     return res.status(statusCodes.FORBIDDEN).json({
+      success: false,
       msg: 'Only police officers can update reports'
     });
   }
 
-  const report = await Report.findById(reportId);
+  // Validate status if provided
+  const validStatuses = ['Pending', 'Assigned', 'Under Investigation', 'Resolved', 'Archived'];
+  if (status && !validStatuses.includes(status)) {
+    return res.status(statusCodes.BAD_REQUEST).json({
+      success: false,
+      msg: 'Invalid status value'
+    });
+  }
+
+  // Get and validate report
+  const report = await Report.findById(reportId)
+    .populate('reporter', 'deviceToken');
+  
   if (!report) {
     return res.status(statusCodes.NOT_FOUND).json({
+      success: false,
       msg: errorMessages.REPORT_NOT_FOUND
     });
   }
 
-  if (status) report.status = status;
-  if (followUp) report.followUp = followUp;
+  // Update status if provided
+  if (status) {
+    report.statusHistory.push({
+      previousStatus: report.status,
+      newStatus: status,
+      updatedBy: req.user.id,
+      updatedAt: new Date()
+    });
+    report.status = status;
+  }
+
+  // Update follow-up if provided
+  if (followUp) {
+    report.followUp.push({
+      details: followUp,
+      addedBy: req.user.id,
+      addedAt: new Date()
+    });
+  }
 
   // Handle additional images
   if (req.files?.additionalImages) {
-    for (const file of req.files.additionalImages) {
-      const result = await uploadToCloudinary(file.path, 'reports');
-      report.additionalImages.push({
+    const uploadPromises = req.files.additionalImages.map(file => 
+      uploadToCloudinary(file.path, 'reports')
+    );
+    
+    try {
+      const uploadResults = await Promise.all(uploadPromises);
+      const newImages = uploadResults.map(result => ({
         url: result.url,
-        public_id: result.public_id
+        public_id: result.public_id,
+        uploadedBy: req.user.id,
+        uploadedAt: new Date()
+      }));
+      
+      report.additionalImages.push(...newImages);
+    } catch (uploadError) {
+      console.error('Image upload failed:', uploadError);
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Failed to upload images'
       });
     }
   }
 
-  await report.save();
-  res.status(statusCodes.OK).json(report);
+  try {
+    await report.save();
+
+    // Create notification for reporter
+    const notificationData = {
+      recipient: report.reporter._id,
+      type: status ? 'STATUS_UPDATED' : 'REPORT_UPDATED',
+      title: status ? 'Report Status Updated' : 'Report Updated',
+      message: status 
+        ? `Your report status has been updated to ${status}`
+        : 'Your report has been updated with new information',
+      data: {
+        reportId: report._id,
+        status: status || report.status,
+        updatedBy: req.user.id
+      }
+    };
+
+    await Notification.create(notificationData);
+
+    // Return success response
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: 'Report updated successfully',
+      data: {
+        report,
+        notification: notificationData
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating report:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Failed to update report',
+      error: error.message
+    });
+  }
 });
 
 // Delete Report
@@ -567,6 +675,42 @@ exports.getUserReports = asyncHandler(async (req, res) => {
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: 'Error retrieving user reports',
+      error: error.message
+    });
+  }
+});
+
+// Get User's Report Details
+exports.getUserReportDetails = asyncHandler(async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const userId = req.user.id;
+
+    const report = await Report.findOne({
+      _id: reportId,
+      reporter: userId
+    })
+    .populate('assignedPoliceStation', 'name address image')
+    .populate('reporter', 'firstName lastName number email')
+    .populate('assignedOfficer', 'firstName lastName number email');
+
+    if (!report) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: errorMessages.REPORT_NOT_FOUND
+      });
+    }
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: report
+    });
+
+  } catch (error) {
+    console.error('Error getting report details:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error retrieving report details',
       error: error.message
     });
   }

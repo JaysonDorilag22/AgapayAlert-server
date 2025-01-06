@@ -111,6 +111,11 @@ const reportSchema = new mongoose.Schema(
       required: [true, "Assigned police station is required"],
     },
 
+    assignedOfficer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+
     status: {
       type: String,
       enum: ["Pending", "Assigned", "Under Investigation", "Resolved"],

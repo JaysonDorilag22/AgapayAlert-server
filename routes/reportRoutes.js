@@ -33,5 +33,6 @@ router.put('/update-status/:reportId', protect, reportController.updateUserRepor
 router.get('/public-feed', protect, reportController.getPublicFeed);
 router.get('/cities', reportController.getReportCities);
 router.get('/user-reports', protect, reportController.getUserReports);
+router.get('/user-report/:reportId', protect, reportController.getUserReportDetails);
 
 module.exports = router;

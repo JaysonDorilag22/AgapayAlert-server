@@ -15,6 +15,7 @@ const reportRoutes = require('./routes/reportRoutes');
 const cityRoutes = require('./routes/cityRoutes');
 const policeStationRoutes = require('./routes/policeStationRoutes')
 const finderReportRoutes = require('./routes/finderReportRoutes')
+const notificationRoutes = require('./routes/notificationRoutes');
 
 dotenv.config();
 
@@ -50,7 +51,7 @@ app.use('/api/v1/report', reportRoutes);
 app.use('/api/v1/city', cityRoutes);
 app.use('/api/v1/police-station', policeStationRoutes)
 app.use('/api/v1/report-finder', finderReportRoutes)
-
+app.use('/api/v1/notifications', notificationRoutes);
 
 // Error handler
 app.use(errorHandler)
