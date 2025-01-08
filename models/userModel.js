@@ -100,6 +100,10 @@ const UserSchema = new mongoose.Schema(
         default: false,
       },
     },
+    deviceToken: {
+      type: String,
+      default: null
+    }
   },
   { timestamps: true }
 );

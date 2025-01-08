@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const reportController = require('../controllers/reportController');
+const broadcastController = require('../controllers/broadcastController');
 const { protect } = require('../middlewares/authMiddleware');
 const authorizeRoles = require('../middlewares/roleMiddleware');
 const roles = require('../constants/roles');
@@ -24,7 +25,7 @@ router.use((req, res, next) => {
 
 // Report Routes
 router.post('/create', protect, cpUpload, reportController.createReport);
-router.get('/', protect, reportController.getReports);
+router.get('/getReports', protect, authorizeRoles(roles.SUPER_ADMIN.role, roles.CITY_ADMIN.role, roles.POLICE_ADMIN.role, roles.POLICE_OFFICER.role), reportController.getReports);
 router.put('/update/:reportId', protect, cpUpload, reportController.updateReport);
 router.delete('/:reportId', protect, authorizeRoles(roles.SUPER_ADMIN.role), reportController.deleteReport);
 router.post('/assign-station', protect, authorizeRoles(roles.POLICE_ADMIN.role), reportController.assignPoliceStation);
@@ -34,5 +35,6 @@ router.get('/public-feed', protect, reportController.getPublicFeed);
 router.get('/cities', reportController.getReportCities);
 router.get('/user-reports', protect, reportController.getUserReports);
 router.get('/user-report/:reportId', protect, reportController.getUserReportDetails);
+router.post('/broadcast/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), broadcastController.publishReport);
 
 module.exports = router;

@@ -172,36 +172,85 @@ exports.createReport = asyncHandler(async (req, res) => {
 
 // Get Reports (with filters)
 exports.getReports = asyncHandler(async (req, res) => {
-  const { status, location, type, startDate, endDate } = req.query;
+  try {
+    const { status, type, startDate, endDate, page = 1, limit = 10 } = req.query;
+    let query = {};
 
-  const query = {};
-  
-  if (status) query.status = status;
-  if (type) query.type = type;
-  if (startDate && endDate) {
-    query.createdAt = {
-      $gte: new Date(startDate),
-      $lte: new Date(endDate)
-    };
-  }
-  if (location) {
-    query.location = {
-      $near: {
-        $geometry: {
-          type: 'Point',
-          coordinates: location.split(',').map(Number)
-        },
-        $maxDistance: 5000
+    // Role-based filtering
+    switch (req.user.roles[0]) {
+      case 'police_officer':
+      case 'police_admin':
+        // Only see reports assigned to their police station
+        if (!req.user.policeStation) {
+          return res.status(statusCodes.BAD_REQUEST).json({
+            success: false,
+            msg: 'Officer/Admin must be assigned to a police station'
+          });
+        }
+        query.assignedPoliceStation = req.user.policeStation;
+        break;
+
+      case 'city_admin':
+        // Get all stations in the admin's city
+        const cityStations = await PoliceStation.find({
+          'address.city': req.user.address.city
+        });
+        query.assignedPoliceStation = {
+          $in: cityStations.map(station => station._id)
+        };
+        break;
+
+      case 'super_admin':
+        // Can see all reports
+        break;
+
+      default:
+        return res.status(statusCodes.FORBIDDEN).json({
+          success: false,
+          msg: 'Not authorized to view reports'
+        });
+    }
+
+    // Apply additional filters
+    if (status) query.status = status;
+    if (type) query.type = type;
+    if (startDate && endDate) {
+      query.createdAt = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Get paginated reports
+    const reports = await Report.find(query)
+      .populate('reporter', '-password')
+      .populate('assignedPoliceStation')
+      .populate('assignedOfficer', 'firstName lastName number email')
+      .sort('-createdAt')
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    const total = await Report.countDocuments(query);
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        reports,
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalReports: total,
+        hasMore: page * limit < total
       }
-    };
+    });
+
+  } catch (error) {
+    console.error('Error getting reports:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error retrieving reports',
+      error: error.message
+    });
   }
-
-  const reports = await Report.find(query)
-    .populate('reporter', '-password')
-    .populate('assignedPoliceStation')
-    .sort('-createdAt');
-
-  res.status(statusCodes.OK).json(reports);
 });
 
 // Update Report (Police)

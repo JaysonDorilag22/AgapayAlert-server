@@ -1,59 +1,108 @@
 const Report = require('../models/reportModel');
-const User = require('../models/userModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
-const errorMessages = require('../constants/errorMessages');
-const { sendEmailNotification } = require('../utils/notificationUtils');
-const { sendPushNotification, createFacebookPost } = require('../utils/broadcastUtils');
+const { sendOneSignalNotification, sendEmailNotification } = require('../utils/notificationUtils');
+const { createFacebookPost } = require('../utils/broadcastUtils');
 
-// Broadcast a report
-exports.broadcastReport = asyncHandler(async (req, res) => {
-  const { reportId } = req.params;
-  const { consent, location } = req.body;
+exports.publishReport = asyncHandler(async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const { channels = [], scheduledDate } = req.body;
 
-  const report = await Report.findById(reportId);
+    // Validate channels
+    const validChannels = ['push', 'email', 'facebook'];
+    const selectedChannels = channels.filter(channel => validChannels.includes(channel));
 
-  if (!report) {
-    return res.status(statusCodes.NOT_FOUND).json({ msg: errorMessages.REPORT_NOT_FOUND });
-  }
-
-  if (consent) {
-    report.broadcastConsent = true;
-    await report.save();
-
-    let users;
-    if (location) {
-      users = await User.find({ 'address.city': location });
-    } else {
-      users = await User.find({});
+    if (selectedChannels.length === 0) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'At least one valid channel must be selected'
+      });
     }
 
-    const emailRecipients = users.map(user => user.email);
-    const pushRecipients = users.map(user => user.oneSignalPlayerId).filter(id => id);
+    const report = await Report.findById(reportId);
 
-    // Send push notifications
-    if (pushRecipients.length > 0) {
-      await sendPushNotification(`Report ${report._id} is now public`, pushRecipients);
-      report.broadcastHistory.push({ method: 'Push Notification' });
+    if (!report) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: 'Report not found'
+      });
     }
 
-    // Create Facebook post
-    await createFacebookPost(report);
-    report.broadcastHistory.push({ method: 'Facebook Post' });
+    if (!report.broadcastConsent) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'No broadcast consent given for this report'
+      });
+    }
 
-    // Send email notifications
-    const emailContext = {
-      reportId: report._id,
-      reportType: report.type,
-      reportSubject: report.details.subject,
-      reportDescription: report.details.description,
-      mostRecentPhoto: report.personInvolved.mostRecentPhoto.url,
+    // Handle scheduling
+    if (scheduledDate) {
+      report.publishSchedule = {
+        scheduledDate: new Date(scheduledDate),
+        channels: selectedChannels
+      };
+      report.save();
+
+      return res.status(statusCodes.OK).json({
+        success: true,
+        msg: 'Broadcast scheduled successfully',
+        scheduledDate: report.publishSchedule.scheduledDate
+      });
+    }
+
+    // Immediate publishing
+    report.isPublished = true;
+    const broadcastRecord = {
+      date: new Date(),
+      action: 'published',
+      method: selectedChannels,
+      publishedBy: req.user.id
     };
-    await sendEmailNotification('broadcastReport.ejs', emailContext, emailRecipients);
-    report.broadcastHistory.push({ method: 'Email' });
 
+    // Execute broadcasts
+    const broadcastPromises = [];
+    
+    if (selectedChannels.includes('push')) {
+      broadcastPromises.push(sendOneSignalNotification({
+        message: `New ${report.type} Alert: Please help locate ${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+        data: { reportId: report._id }
+      }));
+    }
+
+    if (selectedChannels.includes('email')) {
+      broadcastPromises.push(sendEmailNotification(
+        'broadcastReport.ejs',
+        {
+          reportId: report._id,
+          reportType: report.type,
+          personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+          lastSeen: report.personInvolved.lastSeenDate,
+          location: report.location.address
+        }
+      ));
+    }
+
+    if (selectedChannels.includes('facebook')) {
+      broadcastPromises.push(createFacebookPost(report));
+    }
+
+    await Promise.all(broadcastPromises);
+    report.broadcastHistory.push(broadcastRecord);
     await report.save();
-  }
 
-  res.status(statusCodes.OK).json(report);
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: 'Report published successfully',
+      channels: selectedChannels
+    });
+
+  } catch (error) {
+    console.error('Broadcasting error:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error broadcasting report',
+      error: error.message
+    });
+  }
 });

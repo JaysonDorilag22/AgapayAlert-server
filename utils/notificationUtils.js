@@ -9,17 +9,17 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const sendOneSignalNotification = async (notificationData) => {
-  const notification = {
-    app_id: process.env.ONESIGNAL_APP_ID,
-    included_segments: ["All"],
-    contents: { 
-      en: notificationData.message 
-    },
-    headings: { en: "AgapayAlert Notification" },
-    data: notificationData.data
-  };
-
   try {
+    const notification = {
+      app_id: process.env.ONESIGNAL_APP_ID,
+      include_player_ids: notificationData.include_player_ids,
+      contents: { 
+        en: notificationData.message 
+      },
+      headings: { en: "AgapayAlert Notification" },
+      data: notificationData.data
+    };
+
     const response = await oneSignalClient.post('/notifications', notification);
     return { success: true, data: response.data };
   } catch (error) {
@@ -55,7 +55,7 @@ const notifyPoliceStation = async (report, nearestStation) => {
   let notificationResults = { oneSignal: false, email: false };
 
   try {
-    // Get station personnel
+    // Get only relevant station personnel
     const [officers, admin] = await Promise.all([
       User.find({ 
         policeStation: nearestStation._id, 
@@ -72,20 +72,35 @@ const notifyPoliceStation = async (report, nearestStation) => {
       hasAdmin: !!admin
     });
 
-    if (!admin) {
-      console.warn('No admin found for station:', nearestStation._id);
-    }
+    // Get device IDs for OneSignal notification
+    const deviceIds = [
+      ...officers.map(o => o.deviceToken).filter(Boolean),
+      admin?.deviceToken
+    ].filter(Boolean);
 
     // Prepare notification message
     const notificationMessage = `New ${report.type} Report: ${report.personInvolved.firstName} ${report.personInvolved.lastName} was reported ${report.type.toLowerCase()} at ${report.location.address.barangay}, ${report.location.address.city}`;
 
-    // Send OneSignal notification
-    const oneSignalResult = await sendOneSignalNotification(notificationMessage);
-    notificationResults.oneSignal = oneSignalResult.success;
+    // Send targeted OneSignal notification
+    if (deviceIds.length > 0) {
+      const oneSignalResult = await sendOneSignalNotification({
+        message: notificationMessage,
+        // Target specific devices instead of all users
+        include_player_ids: deviceIds,
+        data: {
+          reportId: report._id,
+          type: 'NEW_REPORT',
+          stationId: nearestStation._id
+        }
+      });
+      notificationResults.oneSignal = oneSignalResult.success;
+    }
 
-    // Send email notifications
-    const emailRecipients = officers.map(o => o.email);
-    if (admin) emailRecipients.push(admin.email);
+    // Send email notifications only to station personnel
+    const emailRecipients = [
+      ...officers.map(o => o.email),
+      admin?.email
+    ].filter(Boolean);
 
     if (emailRecipients.length > 0) {
       const emailContext = {
@@ -105,6 +120,26 @@ const notifyPoliceStation = async (report, nearestStation) => {
       notificationResults.email = emailResult.success;
     }
 
+    // Create in-app notifications for relevant users
+    const notificationPromises = [
+      ...officers,
+      admin
+    ].filter(Boolean).map(user => 
+      Notification.create({
+        recipient: user._id,
+        type: 'NEW_REPORT',
+        title: 'New Report Assigned',
+        message: notificationMessage,
+        data: {
+          reportId: report._id,
+          type: report.type,
+          status: report.status
+        }
+      })
+    );
+
+    await Promise.all(notificationPromises);
+
     console.log('Notification results:', notificationResults);
     return notificationResults;
 
@@ -113,7 +148,6 @@ const notifyPoliceStation = async (report, nearestStation) => {
     return notificationResults;
   }
 };
-
 
 const notifyFinderReport = async (finderReport, originalReport, assignedStation, notificationData) => {
   let notificationResults = { oneSignal: false, email: false };

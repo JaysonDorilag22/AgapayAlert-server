@@ -126,27 +126,40 @@ const reportSchema = new mongoose.Schema(
       type: String,
     },
 
-    broadcastConsent: {
-      type: Boolean,
-      default: false, 
-      required: [true, "Broadcast consent is required"],
-    },
-
-    broadcastHistory: [
-      {
-        date: { type: Date, default: Date.now },
-        method: {
-          type: String,
-          enum: ["Push Notification", "Email", "Facebook Post"],
-        },
+    broadcastHistory: [{
+      date: { 
+        type: Date, 
+        default: Date.now 
       },
-    ],
+      action: {
+        type: String,
+        enum: ['published', 'unpublished']
+      },
+      method: [{
+        type: String,
+        enum: ["Push Notification", "Email", "Facebook Post"],
+      }],
+      publishedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      notes: String
+    }],
+
+    publishSchedule: {
+      scheduledDate: Date,
+      channels: [{
+        type: String,
+        enum: ["Push Notification", "Email", "Facebook Post"]
+      }]
+    }
   },
   { timestamps: true }
 );
 
 reportSchema.index({ 'location.address.city': 1 });
 reportSchema.index({ broadcastConsent: 1 });
+reportSchema.index({ isPublished: 1 });
 reportSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model("Report", reportSchema);

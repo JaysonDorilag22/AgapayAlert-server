@@ -3,47 +3,74 @@ const PoliceStation = require('../models/policeStationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
 
+// This function filters data based on user roles:
+
+// Police Officer/Admin
+
+// Can only see reports from their assigned police station
+// Filtered by: assignedPoliceStation
+// City Admin
+
+// Can see all reports in their city
+// Shows reports that are either:
+// Located in their city OR
+// Assigned to any police station in their city
+// Super Admin
+
+// No filters applied
+// Can see all reports nationwide
+
 // Helper for role-based queries
 const getRoleBasedQuery = async (user, baseQuery = {}) => {
-    try {
-      switch(user.roles[0]) {
-        case 'police_officer':
-        case 'police_admin':
-          return { 
-            ...baseQuery, 
-            assignedPoliceStation: user.policeStation 
-          };
-          
-        case 'city_admin':
-          // Get all stations in the admin's city
-          const cityStations = await PoliceStation.find({ 
-            'address.city': user.address.city 
-          });
-          
-          if(!cityStations.length) {
-            throw new Error(`No police stations found in ${user.address.city}`);
-          }
-  
-          return { 
-            ...baseQuery,
-            $or: [
-              { 'location.address.city': user.address.city },
-              { assignedPoliceStation: { $in: cityStations.map(station => station._id) } }
-            ]
-          };
-          
-        case 'super_admin':
-          return baseQuery;
-          
-        default:
-          throw new Error('Invalid role');
-      }
-    } catch (error) {
-      console.error('Error in getRoleBasedQuery:', error);
-      throw error;
-    }
-  };
+  try {
+    console.log('User Role:', user.roles[0]);
+    console.log('User City:', user.address?.city);
 
+    switch(user.roles[0]) {
+      case 'police_officer':
+      case 'police_admin':
+        if (!user.policeStation) {
+          throw new Error('Police officer/admin must have an assigned station');
+        }
+        return { 
+          ...baseQuery, 
+          assignedPoliceStation: user.policeStation 
+        };
+        
+      case 'city_admin':
+        if (!user.address?.city) {
+          throw new Error('City admin must have an assigned city');
+        }
+        
+        // Find all stations in the admin's city
+        const cityStations = await PoliceStation.find({ 
+          'address.city': user.address.city 
+        });
+        
+        console.log('Found stations for city:', cityStations.length);
+
+        // Return reports either in city or assigned to city stations
+        return { 
+          ...baseQuery,
+          $or: [
+            { 'location.address.city': user.address.city },
+            { assignedPoliceStation: { 
+              $in: cityStations.map(station => station._id) 
+            }}
+          ]
+        };
+        
+      case 'super_admin':
+        return baseQuery;
+        
+      default:
+        throw new Error(`Invalid role: ${user.roles[0]}`);
+    }
+  } catch (error) {
+    console.error('Error in getRoleBasedQuery:', error);
+    throw error;
+  }
+};
 
   // Get Basic Analytics
 exports.getBasicAnalytics = asyncHandler(async (req, res) => {
