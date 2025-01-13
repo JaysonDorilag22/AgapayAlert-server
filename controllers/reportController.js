@@ -55,14 +55,15 @@ exports.createReport = asyncHandler(async (req, res) => {
       personInvolved,
       location,
       selectedPoliceStation,
-      broadcastConsent 
     } = req.body;
 
+    const broadcastConsent = req.body.broadcastConsent === 'true';
+
     // Validate input
-    if (!type || !personInvolved || !location) {
+    if (!type || !personInvolved || !location || typeof broadcastConsent !== 'boolean') {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
-        msg: 'Missing required fields'
+        msg: 'Missing required fields or invalid broadcast consent'
       });
     }
 
@@ -126,7 +127,13 @@ exports.createReport = asyncHandler(async (req, res) => {
         address: location.address
       },
       assignedPoliceStation: assignedStation._id,
-      broadcastConsent: broadcastConsent || false
+      broadcastConsent: broadcastConsent,
+      consentUpdateHistory: [{
+        previousValue: false,
+        newValue: broadcastConsent,
+        updatedBy: req.user.id,
+        date: new Date()
+      }]
     });
 
     await report.save();
@@ -460,7 +467,8 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
   }
 
   if (report.status === 'Pending') {
-    const { type, personInvolved, location, dateTime, broadcastConsent } = req.body;
+    // Full update allowed for pending reports
+    const { type, personInvolved, location, broadcastConsent } = req.body;
     
     // Handle most recent photo update
     if (req.files?.['personInvolved[mostRecentPhoto]']) {
@@ -488,19 +496,31 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
       location.coordinates = geoData.coordinates;
     }
 
+    // Track broadcast consent changes
+    if (broadcastConsent !== undefined && broadcastConsent !== report.broadcastConsent) {
+      report.consentUpdateHistory.push({
+        date: new Date(),
+        previousValue: report.broadcastConsent,
+        newValue: broadcastConsent,
+        updatedBy: userId
+      });
+      report.broadcastConsent = broadcastConsent;
+    }
+
     Object.assign(report, {
       type,
       personInvolved,
-      location,
-      dateTime,
-      broadcastConsent
+      location
     });
 
   } else if (!report.hasUpdatedConsent) {
+    // Only allow broadcast consent updates once after pending status
     if (req.body.broadcastConsent !== undefined) {
       report.consentUpdateHistory.push({
+        date: new Date(),
         previousValue: report.broadcastConsent,
         newValue: req.body.broadcastConsent,
+        updatedBy: userId
       });
       report.broadcastConsent = req.body.broadcastConsent;
       report.hasUpdatedConsent = true;
@@ -517,11 +537,11 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
 
   await report.save();
   res.status(statusCodes.OK).json({ 
+    success: true,
     msg: 'Report updated successfully',
-    report 
+    data: report
   });
 });
-
 
 // Assign an officer to a report
 exports.assignOfficer = asyncHandler(async (req, res) => {
@@ -576,6 +596,7 @@ exports.getPublicFeed = asyncHandler(async (req, res) => {
     // Base query for public reports
     let query = { 
       broadcastConsent: true,
+      isPublished: true,
       status: { $ne: 'Resolved' }
     };
 
@@ -673,7 +694,6 @@ exports.getReportCities = asyncHandler(async (req, res) => {
   }
 });
 
-
 // Get User's Reports
 exports.getUserReports = asyncHandler(async (req, res) => {
   try {
@@ -734,14 +754,108 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
     const userId = req.user.id;
+    const userRoles = req.user.roles;
 
-    const report = await Report.findOne({
-      _id: reportId,
-      reporter: userId
-    })
-    .populate('assignedPoliceStation', 'name address image')
-    .populate('reporter', 'firstName lastName number email')
-    .populate('assignedOfficer', 'firstName lastName number email');
+    let report;
+
+    // Case 1: Admin/Officer Access - Full Details
+    if (userRoles.some(role => ['police_officer', 'police_admin', 'city_admin', 'super_admin'].includes(role))) {
+      let query = { _id: reportId };
+      
+      if (userRoles.includes('police_officer') || userRoles.includes('police_admin')) {
+        query.assignedPoliceStation = req.user.policeStation;
+      } else if (userRoles.includes('city_admin')) {
+        const cityStations = await PoliceStation.find({
+          'address.city': req.user.address.city
+        });
+        query.assignedPoliceStation = { $in: cityStations.map(station => station._id) };
+      }
+
+      // Full details for officers/admins
+      report = await Report.findOne(query)
+  .populate('reporter', 'firstName lastName number email address')
+  .populate('assignedPoliceStation')
+  .populate('assignedOfficer')
+  .populate('broadcastHistory.publishedBy', 'firstName lastName roles')
+  .populate('consentUpdateHistory.updatedBy', 'firstName lastName')
+  .select({
+    type: 1,
+    personInvolved: 1,
+    additionalImages: 1,
+    location: 1,
+    status: 1,
+    followUp: 1,
+    broadcastConsent: 1,
+    isPublished: 1,
+    consentUpdateHistory: 1,
+    broadcastHistory: 1,
+    publishSchedule: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    reporter: 1,
+    assignedPoliceStation: 1,
+    assignedOfficer: 1
+  });
+
+    // Case 2: Report Owner Access - Limited Details
+    } else if (userId) {
+      report = await Report.findOne({
+        _id: reportId,
+        $or: [{ reporter: userId }, { broadcastConsent: true }]
+      })
+      .populate('reporter', 'firstName lastName number email address')
+      .populate('assignedPoliceStation', 'name address contactNumber')
+      .select(req.user.id === report?.reporter.toString() ? {
+        // Full details for report owner
+        reporter: 1,
+        type: 1,
+        personInvolved: 1,
+        additionalImages: 1,
+        location: 1,
+        status: 1,
+        followUp: 1,
+        broadcastConsent: 1,
+        assignedPoliceStation: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        consentUpdateHistory: 1,
+        publishSchedule: 1,
+        broadcastHistory: 1
+      } : {
+        // Limited details for public view
+        type: 1,
+        'personInvolved.firstName': 1,
+        'personInvolved.lastName': 1,
+        'personInvolved.age': 1,
+        'personInvolved.dateOfBirth': 1,
+        'personInvolved.lastSeenDate': 1, 
+        'personInvolved.lastSeentime': 1,
+        'personInvolved.lastKnownLocation': 1,
+        'personInvolved.mostRecentPhoto': 1,
+        'location.address': 1,
+        'location.coordinates': 1,
+        status: 1,
+        createdAt: 1
+      });
+
+    // Case 3: Public Access - Minimal Details
+    } else {
+      report = await Report.findOne({
+        _id: reportId,
+        broadcastConsent: true
+      })
+      .select({
+        type: 1,
+        'personInvolved.firstName': 1,
+        'personInvolved.lastName': 1,
+        'personInvolved.age': 1,
+        'personInvolved.lastSeenDate': 1,
+        'personInvolved.lastSeentime': 1,
+        'personInvolved.mostRecentPhoto': 1,
+        'location.address': 1,
+        createdAt: 1
+      });
+    }
 
     if (!report) {
       return res.status(statusCodes.NOT_FOUND).json({
@@ -764,3 +878,126 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
     });
   }
 });
+
+// Search Reports
+exports.searchReports = asyncHandler(async (req, res) => {
+  try {
+    const { 
+      query, 
+      page = 1, 
+      limit = 10,
+      status,
+      type,
+      startDate,
+      endDate 
+    } = req.query;
+
+    const currentPage = parseInt(page);
+    const limitPerPage = parseInt(limit);
+
+    // Base search conditions
+    let searchQuery = {};
+
+    // Role-based filtering
+    switch (req.user.roles[0]) {
+      case 'police_officer':
+      case 'police_admin':
+        // Only see reports assigned to their police station
+        if (!req.user.policeStation) {
+          return res.status(statusCodes.BAD_REQUEST).json({
+            success: false,
+            msg: 'Officer/Admin must be assigned to a police station'
+          });
+        }
+        searchQuery.assignedPoliceStation = req.user.policeStation;
+        break;
+
+      case 'city_admin':
+        // Get all stations in the admin's city
+        const cityStations = await PoliceStation.find({
+          'address.city': req.user.address.city
+        });
+        searchQuery.assignedPoliceStation = {
+          $in: cityStations.map(station => station._id)
+        };
+        break;
+
+      case 'super_admin':
+        // Can see all reports
+        break;
+
+      default:
+        return res.status(statusCodes.FORBIDDEN).json({
+          success: false,
+          msg: 'Not authorized to search reports'
+        });
+    }
+
+    // Add text search if query provided
+    if (query) {
+      searchQuery.$or = [
+        { 'personInvolved.firstName': { $regex: query, $options: 'i' } },
+        { 'personInvolved.lastName': { $regex: query, $options: 'i' } },
+        { 'personInvolved.alias': { $regex: query, $options: 'i' } },
+        { 'location.address.barangay': { $regex: query, $options: 'i' } },
+        { 'location.address.city': { $regex: query, $options: 'i' } }
+      ];
+    }
+
+    // Add filters
+    if (status) searchQuery.status = status;
+    if (type) searchQuery.type = type;
+    if (startDate && endDate) {
+      searchQuery.createdAt = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Execute search with pagination
+    const reports = await Report.find(searchQuery)
+      .populate('reporter', 'firstName lastName number email')
+      .populate('assignedPoliceStation', 'name address')
+      .populate('assignedOfficer', 'firstName lastName number')
+      .select({
+        type: 1,
+        status: 1,
+        'personInvolved.firstName': 1,
+        'personInvolved.lastName': 1,
+        'personInvolved.alias': 1,
+        'personInvolved.age': 1,
+        'personInvolved.lastSeenDate': 1,
+        'personInvolved.lastSeentime': 1,
+        'personInvolved.mostRecentPhoto': 1,
+        'location.address': 1,
+        createdAt: 1
+      })
+      .sort('-createdAt')
+      .skip((currentPage - 1) * limitPerPage)
+      .limit(limitPerPage);
+
+    const total = await Report.countDocuments(searchQuery);
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        reports,
+        currentPage,
+        totalPages: Math.ceil(total / limitPerPage),
+        totalReports: total,
+        hasMore: currentPage * limitPerPage < total
+      }
+    });
+
+  } catch (error) {
+    console.error('Error searching reports:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error searching reports',
+      error: error.message
+    });
+  }
+});
+
+
+// Get Report Details

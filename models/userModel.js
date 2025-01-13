@@ -29,6 +29,10 @@ const UserSchema = new mongoose.Schema(
       required: [true, 'Password is required'],
       minlength: [6, 'Password must be at least 6 characters long'],
     },
+    deviceToken: {
+      type: String,
+      default: null
+    },
     roles: {
       type: [String],
       default: ['user'],
@@ -100,10 +104,6 @@ const UserSchema = new mongoose.Schema(
         default: false,
       },
     },
-    deviceToken: {
-      type: String,
-      default: null
-    }
   },
   { timestamps: true }
 );
@@ -117,6 +117,11 @@ UserSchema.pre('save', async function (next) {
   this.password = await bcrypt.hash(this.password, salt);
   next();
 });
+
+UserSchema.methods.updateDeviceToken = async function(token) {
+  this.deviceToken = token;
+  await this.save();
+};
 
 // Set standard expiration times for OTP and password reset tokens
 UserSchema.methods.setOtpExpiration = function () {

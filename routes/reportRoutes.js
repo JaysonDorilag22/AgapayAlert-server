@@ -16,13 +16,6 @@ const cpUpload = upload.fields([
   { name: 'additionalImages', maxCount: 10 }
 ]);
 
-// Debug middleware
-router.use((req, res, next) => {
-  console.log('Received Fields:', Object.keys(req.body));
-  console.log('Received Files:', Object.keys(req.files || {}));
-  next();
-});
-
 // Report Routes
 router.post('/create', protect, cpUpload, reportController.createReport);
 router.get('/getReports', protect, authorizeRoles(roles.SUPER_ADMIN.role, roles.CITY_ADMIN.role, roles.POLICE_ADMIN.role, roles.POLICE_OFFICER.role), reportController.getReports);
@@ -35,6 +28,24 @@ router.get('/public-feed', protect, reportController.getPublicFeed);
 router.get('/cities', reportController.getReportCities);
 router.get('/user-reports', protect, reportController.getUserReports);
 router.get('/user-report/:reportId', protect, reportController.getUserReportDetails);
-router.post('/broadcast/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), broadcastController.publishReport);
 
+
+router.get('/search', protect, authorizeRoles( roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role, roles.SUPER_ADMIN.role ), reportController.searchReports);
+
+
+// Broadcast routes
+router.post('/broadcast/:reportId', 
+  protect, 
+  authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), 
+  broadcastController.publishReport
+);
+
+router.get('/broadcast/:reportId/history', 
+  protect, 
+  authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), 
+  broadcastController.getBroadcastHistory
+);
+
+
+router.post('/test-admin', protect, broadcastController.testAdminNotification);
 module.exports = router;

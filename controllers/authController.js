@@ -11,7 +11,7 @@ const errorMessages = require('../constants/errorMessages');
 const statusCodes = require('../constants/statusCodes');
 const roles = require('../constants/roles');
 const uploadToCloudinary = require('../utils/uploadToCloudinary');
-
+const axios = require('axios');
 dotenv.config();
 
 
@@ -63,7 +63,7 @@ exports.register = asyncHandler(async (req, res) => {
     return res.status(statusCodes.BAD_REQUEST).json({ errors: errors.array() });
   }
 
-  const { firstName, lastName, number, email, password, address, deviceToken } = req.body;
+  const { firstName, lastName, number, email, password, address } = req.body;
   const file = req.file;
 
   if (!file) {
@@ -89,7 +89,6 @@ exports.register = asyncHandler(async (req, res) => {
     password,
     address,
     avatar,
-    deviceToken,
     preferredNotifications: {
       push: true,
       email: false,
@@ -160,62 +159,87 @@ exports.resendVerification = asyncHandler(async (req, res) => {
 
 // Login with device token
 exports.login = asyncHandler(async (req, res) => {
-  const { email, password, deviceToken } = req.body;
+  try {
+    const { email, password, deviceToken } = req.body;
+    console.log('Login attempt with:', { email, deviceToken });
 
-  const user = await User.findOne({ email });
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(statusCodes.BAD_REQUEST).json({ 
+        msg: errorMessages.USER_NOT_FOUND 
+      });
+    }
 
-  if (!user) {
-    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.USER_NOT_FOUND });
-  }
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(statusCodes.BAD_REQUEST).json({ 
+        msg: errorMessages.INVALID_CREDENTIALS 
+      });
+    }
 
-  const isMatch = await bcrypt.compare(password, user.password);
+    // Update OneSignal player tags and save device token
+    if (deviceToken) {
+      try {
+        await axios.put(
+          `https://onesignal.com/api/v1/players/${deviceToken}`,
+          {
+            app_id: process.env.ONESIGNAL_APP_ID,
+            tags: {
+              role: user.roles[0],
+              userId: user._id.toString()
+            }
+          },
+          {
+            headers: {
+              'Authorization': `Basic ${process.env.ONESIGNAL_API_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
 
-  if (!isMatch) {
-    return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.INVALID_CREDENTIALS });
-  }
+        user.deviceToken = deviceToken;
+        await user.save();
+        console.log('Updated player tags and device token:', { deviceToken, role: user.roles[0] });
+      } catch (oneSignalError) {
+        console.error('OneSignal update error:', oneSignalError);
+      }
+    }
 
-  if (!user.isVerified) {
-    const otp = crypto.randomBytes(3).toString('hex');
-    user.otp = otp;
-    user.setOtpExpiration();
-    await user.save();
+    const payload = {
+      user: {
+        id: user.id,
+        roles: user.roles,
+      }
+    };
 
-    const mailOptions = createMailOptions(user.email, 'Verify your email', 'otpEmail.ejs', { otp });
-    await sendEmail(mailOptions);
+    generateToken(payload, res);
 
-    return res.status(statusCodes.BAD_REQUEST).json({ 
-      msg: errorMessages.EMAIL_NOT_VERIFIED,
-      verificationSent: true 
+    res.json({ 
+      msg: 'Logged in successfully',
+      user: {
+        ...user.toObject(),
+        deviceToken: user.deviceToken
+      }
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false, 
+      msg: 'Login failed',
+      error: error.message
     });
   }
-
-  // Update device token if provided
-  if (deviceToken) {
-    user.deviceToken = deviceToken;
-    await user.save();
-  }
-
-  const payload = {
-    user: {
-      id: user.id,
-      roles: user.roles,
-    },
-  };
-  generateToken(payload, res);
-
-  res.json({ msg: 'Logged in successfully', user });
 });
-
-// Logout and clear device token
 // Logout and clear device token
 exports.logout = asyncHandler(async (req, res) => {
   try {
     // Only clear device token if user is authenticated
-    if (req.user && req.user.id) {
-      await User.findByIdAndUpdate(req.user.id, {
-        deviceToken: null
-      });
-    }
+    // if (req.user && req.user.id) {
+    //   await User.findByIdAndUpdate(req.user.id, {
+    //     deviceToken: null
+    //   });
+    // }
 
     // Clear the cookie regardless of user state
     res.clearCookie('token', {
@@ -308,27 +332,23 @@ exports.resetPassword = asyncHandler(async (req, res) => {
 
 
 exports.updateDeviceToken = asyncHandler(async (req, res) => {
-  const { deviceToken } = req.body;
-  
-  const user = await User.findByIdAndUpdate(
-    req.user.id, 
-    {
-      deviceToken,
-      'preferredNotifications.push': true
-    },
-    { new: true }
-  );
+  try {
+    const { playerId } = req.body;
+    const userId = req.user.id;
 
-  if (!user) {
-    return res.status(statusCodes.NOT_FOUND).json({
+    await User.findByIdAndUpdate(userId, {
+      deviceToken: playerId
+    });
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: 'Device token updated'
+    });
+  } catch (error) {
+    console.error('Token update error:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      message: 'User not found'
+      msg: 'Failed to update device token'
     });
   }
-
-  res.status(statusCodes.OK).json({
-    success: true,
-    message: 'Device token updated successfully',
-    preferredNotifications: user.preferredNotifications
-  });
 });

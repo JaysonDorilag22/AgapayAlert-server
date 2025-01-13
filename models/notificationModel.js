@@ -8,7 +8,13 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['REPORT_CREATED', 'STATUS_UPDATED', 'ASSIGNED_OFFICER', 'FINDER_REPORT'],
+    enum: [
+      'REPORT_CREATED',
+      'STATUS_UPDATED', 
+      'ASSIGNED_OFFICER',
+      'FINDER_REPORT',
+      'BROADCAST_ALERT' 
+    ],
     required: true
   },
   title: {

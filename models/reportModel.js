@@ -113,7 +113,7 @@ const reportSchema = new mongoose.Schema(
 
     assignedOfficer: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
+      ref: "User",
     },
 
     status: {
@@ -126,38 +126,85 @@ const reportSchema = new mongoose.Schema(
       type: String,
     },
 
-    broadcastHistory: [{
-      date: { 
-        type: Date, 
-        default: Date.now 
+    broadcastConsent: {
+      type: Boolean,
+      default: false,
+      required: [true, "Broadcast consent is required"],
+    },
+
+    isPublished: {
+      type: Boolean,
+      default: false,
+    },
+
+    consentUpdateHistory: [
+      {
+        date: {
+          type: Date,
+          default: Date.now,
+        },
+        previousValue: Boolean,
+        newValue: Boolean,
+        updatedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
       },
-      action: {
-        type: String,
-        enum: ['published', 'unpublished']
+    ],
+
+    broadcastHistory: [
+      {
+        date: {
+          type: Date,
+          default: Date.now,
+        },
+        action: {
+          type: String,
+          enum: ["published", "unpublished"],
+        },
+        method: [
+          {
+            type: String,
+            enum: ["Push Notification", "SMS", "Facebook Post"],
+          },
+        ],
+        publishedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        facebookPostId: String, // Store Facebook post ID
+        notes: String,
+        scope: {
+          type: {
+            type: String,
+            enum: ["city", "radius", "all"],
+          },
+          city: String,
+          radius: Number,
+        },
+        targetedUsers: Number,
+        deliveryStats: {
+          push: Number,
+          sms: Number,
+          facebook: Number,
+        },
       },
-      method: [{
-        type: String,
-        enum: ["Push Notification", "Email", "Facebook Post"],
-      }],
-      publishedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-      },
-      notes: String
-    }],
+    ],
 
     publishSchedule: {
       scheduledDate: Date,
-      channels: [{
-        type: String,
-        enum: ["Push Notification", "Email", "Facebook Post"]
-      }]
-    }
+      channels: [
+        {
+          type: String,
+          enum: ["Push Notification", "Email", "Facebook Post"],
+        },
+      ],
+    },
   },
   { timestamps: true }
 );
 
-reportSchema.index({ 'location.address.city': 1 });
+reportSchema.index({ "location.address.city": 1 });
 reportSchema.index({ broadcastConsent: 1 });
 reportSchema.index({ isPublished: 1 });
 reportSchema.index({ createdAt: -1 });

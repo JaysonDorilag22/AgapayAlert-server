@@ -34,6 +34,7 @@ const sendPushNotification = async (message, recipients) => {
  * Create a Facebook post.
  * @param {Object} report - The report object.
  */
+// Create Facebook post
 const createFacebookPost = async (report) => {
   const message = `New report: ${report.details.subject}\nDescription: ${report.details.description}`;
   const url = `https://graph.facebook.com/${process.env.FACEBOOK_PAGE_ID}/feed`;
@@ -44,14 +45,43 @@ const createFacebookPost = async (report) => {
       access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
       link: report.personInvolved.mostRecentPhoto.url,
     });
-    console.log('Facebook post response:', response.data);
+    
+    // Return the post ID for future reference
+    return {
+      success: true,
+      postId: response.data.id,
+      data: response.data
+    };
   } catch (error) {
-    console.error('Error creating Facebook post:', error.response ? error.response.data : error.message);
+    console.error('Error creating Facebook post:', error.response?.data || error);
     throw new Error('Failed to create Facebook post');
   }
 };
 
+// Delete Facebook post
+const deleteFacebookPost = async (postId) => {
+  const url = `https://graph.facebook.com/${postId}`;
+  
+  try {
+    await axios.delete(url, {
+      params: {
+        access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN
+      }
+    });
+    
+    return {
+      success: true,
+      msg: 'Facebook post deleted successfully'
+    };
+  } catch (error) {
+    console.error('Error deleting Facebook post:', error.response?.data || error);
+    throw new Error('Failed to delete Facebook post');
+  }
+};
+
+
 module.exports = {
   sendPushNotification,
   createFacebookPost,
+  deleteFacebookPost
 };
