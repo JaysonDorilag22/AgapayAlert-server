@@ -65,6 +65,17 @@ const UserSchema = new mongoose.Schema(
         type: String,
         required: [true, 'ZIP code is required'],
       },
+      location: {
+        type: {
+          type: String,
+          enum: ['Point'],
+          default: 'Point'
+        },
+        coordinates: {
+          type: [Number],
+          default: [0, 0]
+        }
+      }
     },
     policeStation: {
       type: mongoose.Schema.Types.ObjectId,
@@ -108,7 +119,6 @@ const UserSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Hash the password before saving the user
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) {
     return next();
@@ -123,13 +133,13 @@ UserSchema.methods.updateDeviceToken = async function(token) {
   await this.save();
 };
 
-// Set standard expiration times for OTP and password reset tokens
 UserSchema.methods.setOtpExpiration = function () {
-  this.otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+  this.otpExpires = Date.now() + 10 * 60 * 1000; 
 };
 
 UserSchema.methods.setResetPasswordExpiration = function () {
-  this.resetPasswordExpires = Date.now() + 60 * 60 * 1000; // 1 hour
+  this.resetPasswordExpires = Date.now() + 60 * 60 * 1000; 
 };
 
+UserSchema.index({ "address.location": "2dsphere" });
 module.exports = mongoose.model('User', UserSchema);

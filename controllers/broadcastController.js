@@ -6,17 +6,19 @@ const { sendOneSignalNotification, sendSMSNotification } = require('../utils/not
 const { createFacebookPost, deleteFacebookPost } = require('../utils/broadcastUtils');
 const notificationController = require('./notificationController')
 const axios = require('axios');
+const broadcastTemplates = require('../utils/contentTemplates');
+
 // Publish Report
 exports.publishReport = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
     const { 
-      broadcastType,    // 'push', 'sms', 'facebook', 'all'
+      broadcastType,    
       scheduledDate,
       scope = {
-        type: 'city',   // 'city', 'radius', 'all'
+        type: 'city',   
         city: null,     
-        radius: null    // in kilometers
+        radius: null    
       }
     } = req.body;
 
@@ -42,7 +44,7 @@ exports.publishReport = asyncHandler(async (req, res) => {
       case 'city':
         targetUsers = await User.find({
           'address.city': scope.city,
-          'preferredNotifications.push': true
+          deviceToken: { $exists: true, $ne: null }
         });
         break;
 
@@ -57,28 +59,21 @@ exports.publishReport = asyncHandler(async (req, res) => {
               $maxDistance: scope.radius * 1000
             }
           },
-          'preferredNotifications.push': true
+          deviceToken: { $exists: true, $ne: null }
         });
         break;
 
       case 'all':
         targetUsers = await User.find({
-          'preferredNotifications.push': true
+          deviceToken: { $exists: true, $ne: null }
         });
         break;
     }
 
-    // 3. Format Content
-    const broadcastContent = {
-      title: `${report.type} Alert`,
-      message: `URGENT: Please help us locate
-      
-${report.personInvolved.firstName} ${report.personInvolved.lastName}
-Age: ${report.personInvolved.age}
-Last Seen: ${new Date(report.personInvolved.lastSeenDate).toLocaleDateString()} at ${report.personInvolved.lastSeentime}
-Location: ${report.personInvolved.lastKnownLocation}`,
-      image: report.personInvolved.mostRecentPhoto.url
-    };
+    // 3. Get Content from Templates
+    const pushContent = broadcastTemplates.report(report);
+    const smsContent = broadcastTemplates.sms(report);
+    const fbContent = broadcastTemplates.facebook(report);
 
     // 4. Handle Scheduling
     if (scheduledDate) {
@@ -115,68 +110,61 @@ Location: ${report.personInvolved.lastKnownLocation}`,
 
     switch(broadcastType) {
       case 'Push Notification':
-        broadcastResults.push = await sendOneSignalNotification({
-          title: broadcastContent.title,
-          message: broadcastContent.message,
-          data: { 
-            reportId: report._id,
-            type: report.type,
-            image: broadcastContent.image
-          }
-        });
+        const deviceIds = targetUsers.map(user => user.deviceToken).filter(Boolean);
+        if (deviceIds.length > 0) {
+          broadcastResults.push = await sendOneSignalNotification({
+            ...pushContent,
+            include_player_ids: deviceIds,
+            data: { 
+              reportId: report._id,
+              type: report.type,
+              image: report.personInvolved.mostRecentPhoto.url
+            }
+          });
+          broadcastRecord.deliveryStats.push = deviceIds.length;
+        }
         broadcastRecord.method.push('Push Notification');
-        broadcastRecord.deliveryStats.push = targetUsers.length;
         break;
 
       case 'SMS':
         const phones = targetUsers.map(user => user.number).filter(Boolean);
         broadcastResults.sms = await sendSMSNotification({
           phones,
-          message: broadcastContent.message
+          message: smsContent.message
         });
         broadcastRecord.method.push('SMS');
         broadcastRecord.deliveryStats.sms = phones.length;
         break;
 
       case 'Facebook Post':
-        broadcastResults.facebook = await createFacebookPost({
-          message: broadcastContent.message,
-          image: broadcastContent.image
-        });
+        broadcastResults.facebook = await createFacebookPost(fbContent);
         broadcastRecord.method.push('Facebook Post');
         broadcastRecord.deliveryStats.facebook = 1;
         break;
 
       case 'all':
+        const allDeviceIds = targetUsers.map(user => user.deviceToken).filter(Boolean);
         const [pushResult, smsResult, fbResult] = await Promise.all([
-          sendOneSignalNotification({
-            title: broadcastContent.title,
-            message: broadcastContent.message,
+          allDeviceIds.length > 0 ? sendOneSignalNotification({
+            ...pushContent,
+            include_player_ids: allDeviceIds,
             data: { 
               reportId: report._id,
               type: report.type,
-              image: broadcastContent.image
+              image: report.personInvolved.mostRecentPhoto.url
             }
-          }),
+          }) : { success: false, msg: 'No valid device tokens' },
           sendSMSNotification({
             phones: targetUsers.map(u => u.number).filter(Boolean),
-            message: broadcastContent.message
+            message: smsContent.message
           }),
-          createFacebookPost({
-            message: broadcastContent.message,
-            image: broadcastContent.image
-          })
+          createFacebookPost(fbContent)
         ]);
 
-        broadcastResults = { 
-          push: pushResult, 
-          sms: smsResult, 
-          facebook: fbResult 
-        };
-        
+        broadcastResults = { push: pushResult, sms: smsResult, facebook: fbResult };
         broadcastRecord.method = ["Push Notification", "SMS", "Facebook Post"];
         broadcastRecord.deliveryStats = {
-          push: targetUsers.length,
+          push: allDeviceIds.length,
           sms: targetUsers.filter(u => u.number).length,
           facebook: 1
         };
@@ -191,15 +179,23 @@ Location: ${report.personInvolved.lastKnownLocation}`,
 
     // 6. Create In-App Notifications
     if (targetUsers.length > 0) {
-      await notificationController.createBroadcastNotification({
-        body: {
-          reportId: report._id,
-          recipients: targetUsers.map(user => user._id),
-          broadcastType,
-          scope
-        },
-        user: req.user
-      });
+      try {
+        const notificationResult = await notificationController.createBroadcastNotification({
+          body: {
+            reportId: report._id,
+            recipients: targetUsers.map(user => user._id),
+            broadcastType,
+            scope
+          },
+          user: req.user
+        });
+
+        if (!notificationResult.success) {
+          console.error('Notification creation failed:', notificationResult.msg);
+        }
+      } catch (error) {
+        console.error('Notification error:', error);
+      }
     }
 
     // 7. Update Report & Save
@@ -228,7 +224,7 @@ Location: ${report.personInvolved.lastKnownLocation}`,
   }
 });
 
-
+// Unpublish Report
 exports.unpublishReport = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;

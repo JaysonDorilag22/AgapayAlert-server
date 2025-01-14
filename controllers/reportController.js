@@ -140,7 +140,7 @@ exports.createReport = asyncHandler(async (req, res) => {
 
     // Handle notifications
     try {
-      // await notifyPoliceStation(report, assignedStation);
+      await notifyPoliceStation(report, assignedStation);
       
       // Notify reporter
       await Notification.create({
@@ -175,7 +175,6 @@ exports.createReport = asyncHandler(async (req, res) => {
     });
   }
 });
-
 
 // Get Reports (with filters)
 exports.getReports = asyncHandler(async (req, res) => {

@@ -14,4 +14,5 @@ router.get('/', protect, policeStationController.getPoliceStations);
 router.get('/:policeStationId', protect, policeStationController.getPoliceStationById);
 router.put('/:policeStationId', protect, authorizeRoles(roles.SUPER_ADMIN.role), upload.single('image'), policeStationController.updatePoliceStation);
 router.delete('/:policeStationId', protect, authorizeRoles(roles.SUPER_ADMIN.role), policeStationController.deletePoliceStation);
+
 module.exports = router;

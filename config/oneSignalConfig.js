@@ -13,37 +13,32 @@ const oneSignalClient = axios.create({
   }
 });
 
-// Helper to get target users based on criteria
-const getTargetUsers = async (options) => {
+// Helper to get target users based on scope
+const getTargetUsers = async (scope) => {
   try {
-    let query = { 'preferredNotifications.push': true };
-
-    // Filter by city if specified
-    if (options.city) {
-      query['address.city'] = options.city;
-    }
-
-    // Filter by police station if specified
-    if (options.policeStationId) {
-      query.policeStation = options.policeStationId;
-    }
-
-    // Filter by roles if specified
-    if (options.roles && options.roles.length > 0) {
-      query.roles = { $in: options.roles };
-    }
-
-    // Filter by specific users if specified
-    if (options.userIds && options.userIds.length > 0) {
-      query._id = { $in: options.userIds };
-    }
-
-    // Get users who have device tokens
-    const users = await User.find({
-      ...query,
+    let query = { 
+      'preferredNotifications.push': true,
       deviceToken: { $exists: true, $ne: null }
-    });
+    };
 
+    // Filter by scope
+    switch(scope.type) {
+      case 'city':
+        query['address.city'] = scope.city;
+        break;
+        
+      case 'radius':
+        query['address.location'] = {
+          $near: {
+            $geometry: scope.coordinates,
+            $maxDistance: scope.radius * 1000 // Convert km to meters
+          }
+        };
+        break;
+      // 'all' case doesn't need additional filters
+    }
+
+    const users = await User.find(query);
     return users.map(user => user.deviceToken);
   } catch (error) {
     console.error('Error getting target users:', error);
@@ -51,13 +46,13 @@ const getTargetUsers = async (options) => {
   }
 };
 
+// Create and send notification
 const createNotification = async (options) => {
   try {
-    const deviceTokens = await getTargetUsers(options);
+    const deviceTokens = await getTargetUsers(options.scope);
 
     if (deviceTokens.length === 0) {
-      console.log('No target users found for notification');
-      return;
+      return { success: false, msg: 'No target users found' };
     }
 
     const notification = {
@@ -69,11 +64,18 @@ const createNotification = async (options) => {
     };
 
     const response = await oneSignalClient.post('/notifications', notification);
-    return response.data;
+    return {
+      success: true,
+      recipients: deviceTokens.length,
+      data: response.data
+    };
 
   } catch (error) {
     console.error('OneSignal API Error:', error.response?.data || error);
-    throw error;
+    return {
+      success: false,
+      error: error.message
+    };
   }
 };
 

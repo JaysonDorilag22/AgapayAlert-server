@@ -9,7 +9,6 @@ const roles = require('../constants/roles');
 
 const upload = multer({ dest: 'uploads/' });
 
-// Configure multiple file upload fields
 const cpUpload = upload.fields([
   { name: 'images', maxCount: 10 },
   { name: 'personInvolved[mostRecentPhoto]', maxCount: 1 },
@@ -28,24 +27,14 @@ router.get('/public-feed', protect, reportController.getPublicFeed);
 router.get('/cities', reportController.getReportCities);
 router.get('/user-reports', protect, reportController.getUserReports);
 router.get('/user-report/:reportId', protect, reportController.getUserReportDetails);
-
-
 router.get('/search', protect, authorizeRoles( roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role, roles.SUPER_ADMIN.role ), reportController.searchReports);
 
 
 // Broadcast routes
-router.post('/broadcast/:reportId', 
-  protect, 
-  authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), 
-  broadcastController.publishReport
-);
+router.post('/broadcast/publish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role), broadcastController.publishReport);
+router.post('/broadcast/unpublish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), broadcastController.unpublishReport);
+router.get('/broadcast/history/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), broadcastController.getBroadcastHistory);
 
-router.get('/broadcast/:reportId/history', 
-  protect, 
-  authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), 
-  broadcastController.getBroadcastHistory
-);
-
-
+//for testing purposes
 router.post('/test-admin', protect, broadcastController.testAdminNotification);
 module.exports = router;

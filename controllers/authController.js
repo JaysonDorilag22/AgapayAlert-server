@@ -23,10 +23,33 @@ exports.googleAuth = asyncHandler(async (req, res) => {
     let user = await User.findOne({ email });
 
     if (user) {
-      // Update device token if provided
+      // Update device token and OneSignal tags if provided
       if (deviceToken) {
-        user.deviceToken = deviceToken;
-        await user.save();
+        try {
+          // Update OneSignal player tags
+          await axios.put(
+            `https://onesignal.com/api/v1/players/${deviceToken}`,
+            {
+              app_id: process.env.ONESIGNAL_APP_ID,
+              tags: {
+                role: user.roles[0],
+                userId: user._id.toString()
+              }
+            },
+            {
+              headers: {
+                'Authorization': `Basic ${process.env.ONESIGNAL_API_KEY}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+
+          user.deviceToken = deviceToken;
+          await user.save();
+          console.log('Updated Google auth device token:', { deviceToken, role: user.roles[0] });
+        } catch (oneSignalError) {
+          console.error('OneSignal update error:', oneSignalError);
+        }
       }
 
       const payload = {
@@ -36,7 +59,14 @@ exports.googleAuth = asyncHandler(async (req, res) => {
         },
       };
       const token = generateToken(payload, res);
-      return res.json({ exists: true, user, token });
+      return res.json({ 
+        exists: true, 
+        user: {
+          ...user.toObject(),
+          deviceToken: user.deviceToken
+        }, 
+        token 
+      });
     } else {
       return res.json({
         exists: false,
@@ -51,12 +81,15 @@ exports.googleAuth = asyncHandler(async (req, res) => {
     }
   } catch (error) {
     console.error('Error checking user:', error);
-    res.status(500).json({ message: 'Server error' });
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({ 
+      success: false,
+      msg: 'Server error during Google authentication',
+      error: error.message 
+    });
   }
 });
 
 // Register
-// Register with device token
 exports.register = asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -177,6 +210,13 @@ exports.login = asyncHandler(async (req, res) => {
       });
     }
 
+    if (!user.isVerified) {
+      return res.status(statusCodes.UNAUTHORIZED).json({
+        msg: errorMessages.EMAIL_NOT_VERIFIED,
+        email: user.email
+      });
+    }
+
     // Update OneSignal player tags and save device token
     if (deviceToken) {
       try {
@@ -231,6 +271,7 @@ exports.login = asyncHandler(async (req, res) => {
     });
   }
 });
+
 // Logout and clear device token
 exports.logout = asyncHandler(async (req, res) => {
   try {
@@ -352,3 +393,59 @@ exports.updateDeviceToken = asyncHandler(async (req, res) => {
     });
   }
 });
+
+
+// exports.logout = asyncHandler(async (req, res) => {
+//   try {
+//     // 1. Check if user has device token
+//     if (req.user && req.user.id) {
+//       const user = await User.findById(req.user.id);
+      
+//       if (user?.deviceToken) {
+//         // 2. Remove OneSignal tags
+//         await axios.put(
+//           `https://onesignal.com/api/v1/players/${user.deviceToken}`,
+//           {
+//             app_id: process.env.ONESIGNAL_APP_ID,
+//             tags: {
+//               role: '',
+//               userId: ''
+//             }
+//           },
+//           {
+//             headers: {
+//               'Authorization': `Basic ${process.env.ONESIGNAL_REST_API_KEY}`,
+//               'Content-Type': 'application/json'
+//             }
+//           }
+//         );
+
+//         // 3. Clear device token from user
+//         user.deviceToken = null;
+//         await user.save();
+//       }
+//     }
+
+//     // 4. Clear auth cookie
+//     res.clearCookie('token', {
+//       httpOnly: true,
+//       secure: process.env.NODE_ENV === 'production',
+//       sameSite: 'Lax',
+//       path: '/'
+//     });
+
+//     res.status(statusCodes.OK).json({ 
+//       success: true,
+//       msg: 'Logged out successfully',
+//       tokenCleared: true 
+//     });
+
+//   } catch (error) {
+//     console.error('Logout error:', error);
+//     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//       success: false,
+//       msg: 'Error during logout',
+//       error: error.message
+//     });
+//   }
+// });

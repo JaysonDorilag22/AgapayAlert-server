@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { sendEmailNotification } = require('./notificationUtils');
 const dotenv = require('dotenv');
-
+const { broadcastTemplates } = require('./contentTemplates');
 dotenv.config();
 
 /**
@@ -36,27 +36,28 @@ const sendPushNotification = async (message, recipients) => {
  */
 // Create Facebook post
 const createFacebookPost = async (report) => {
-  const message = `New report: ${report.details.subject}\nDescription: ${report.details.description}`;
-  const url = `https://graph.facebook.com/${process.env.FACEBOOK_PAGE_ID}/feed`;
-
   try {
+    const content = broadcastTemplates.facebook(report);
+    const url = `https://graph.facebook.com/${process.env.FACEBOOK_PAGE_ID}/feed`;
+
     const response = await axios.post(url, {
-      message,
+      message: content.message,
       access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
-      link: report.personInvolved.mostRecentPhoto.url,
+      link: content.image
     });
     
-    // Return the post ID for future reference
     return {
       success: true,
       postId: response.data.id,
       data: response.data
     };
   } catch (error) {
-    console.error('Error creating Facebook post:', error.response?.data || error);
-    throw new Error('Failed to create Facebook post');
+    console.error('Facebook post failed:', error);
+    return { success: false, error: error.message };
   }
 };
+
+// Remove duplicate sendPushNotification
 
 // Delete Facebook post
 const deleteFacebookPost = async (postId) => {

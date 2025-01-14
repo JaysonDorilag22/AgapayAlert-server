@@ -55,9 +55,9 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
 });
 
 // Create broadcast notification for users in scope
-exports.createBroadcastNotification = asyncHandler(async (req, res) => {
+exports.createBroadcastNotification = async ({ body, user }) => {
   try {
-    const { reportId, recipients, broadcastType, scope } = req.body;
+    const { reportId, recipients, broadcastType, scope } = body;
 
     const notificationPromises = recipients.map(userId => 
       Notification.create({
@@ -69,27 +69,27 @@ exports.createBroadcastNotification = asyncHandler(async (req, res) => {
           reportId,
           broadcastType,
           scope,
-          broadcastedBy: req.user.id
+          broadcastedBy: user?.id
         }
       })
     );
 
     await Promise.all(notificationPromises);
 
-    res.status(statusCodes.OK).json({
+    return {
       success: true,
-      msg: `Broadcast notifications created for ${recipients.length} users`
-    });
+      msg: `Created ${recipients.length} notifications`
+    };
 
   } catch (error) {
-    console.error('Error creating broadcast notifications:', error);
-    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+    console.error('Notification creation error:', error);
+    return {
       success: false,
-      msg: 'Error creating broadcast notifications',
+      msg: 'Failed to create notifications',
       error: error.message
-    });
+    };
   }
-});
+};
 
 // Mark notification as read
 exports.markAsRead = asyncHandler(async (req, res) => {
