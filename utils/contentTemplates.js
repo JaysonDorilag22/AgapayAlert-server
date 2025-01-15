@@ -17,26 +17,28 @@ const broadcastTemplates = {
     image: report.personInvolved.mostRecentPhoto.url,
   }),
 
-  facebook: (report) => ({
-    message: `🚨 MISSING PERSON ALERT 🚨
-  
-  PLEASE HELP US LOCATE:
-  Name: ${report.personInvolved.firstName} ${report.personInvolved.lastName}
-  Age: ${report.personInvolved.age}
-  Last Seen: ${new Date(
-    report.personInvolved.lastSeenDate
-  ).toLocaleDateString()} at ${report.personInvolved.lastSeentime}
-  Last Known Location: ${report.location.address.streetAddress}, ${
-      report.location.address.barangay
-    }, ${report.location.address.city}
-  
-  If you have any information, please contact:
-  - Nearest Police Station
-  - AgapayAlert Emergency Hotline
-  
-  #MissingPerson #PleaseShare #AgapayAlert`,
-    image: report.personInvolved.mostRecentPhoto.url,
-  }),
+  facebook: (report) => {
+    if (!report?.personInvolved) {
+      throw new Error('Invalid report data for Facebook template');
+    }
+
+    return {
+      message: `🚨 MISSING PERSON ALERT 🚨
+
+PLEASE HELP US LOCATE:
+Name: ${report.personInvolved.firstName} ${report.personInvolved.lastName}
+Age: ${report.personInvolved.age}
+Last Seen: ${new Date(report.personInvolved.lastSeenDate).toLocaleDateString()} at ${report.personInvolved.lastSeentime}
+Last Known Location: ${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}
+
+If you have any information, please contact:
+- Nearest Police Station
+- AgapayAlert Emergency Hotline
+
+#MissingPerson #PleaseShare #AgapayAlert`,
+      image: report.personInvolved.mostRecentPhoto.url
+    };
+  },
 
   sms: (report) => ({
     message: `AgapayAlert: ${report.type} - ${report.personInvolved.firstName} ${report.personInvolved.lastName}, ${report.personInvolved.age}yo, last seen at ${report.personInvolved.lastKnownLocation}`,

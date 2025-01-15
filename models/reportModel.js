@@ -191,15 +191,6 @@ const reportSchema = new mongoose.Schema(
       },
     ],
 
-    publishSchedule: {
-      scheduledDate: Date,
-      channels: [
-        {
-          type: String,
-          enum: ["Push Notification", "Email", "Facebook Post"],
-        },
-      ],
-    },
   },
   { timestamps: true }
 );

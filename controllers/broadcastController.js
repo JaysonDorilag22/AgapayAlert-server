@@ -6,19 +6,18 @@ const { sendOneSignalNotification, sendSMSNotification } = require('../utils/not
 const { createFacebookPost, deleteFacebookPost } = require('../utils/broadcastUtils');
 const notificationController = require('./notificationController')
 const axios = require('axios');
-const broadcastTemplates = require('../utils/contentTemplates');
+const {broadcastTemplates} = require('../utils/contentTemplates');
 
 // Publish Report
 exports.publishReport = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
     const { 
-      broadcastType,    
-      scheduledDate,
+      broadcastType,
       scope = {
-        type: 'city',   
-        city: null,     
-        radius: null    
+        type: 'city',
+        city: null,
+        radius: null
       }
     } = req.body;
 
@@ -75,24 +74,7 @@ exports.publishReport = asyncHandler(async (req, res) => {
     const smsContent = broadcastTemplates.sms(report);
     const fbContent = broadcastTemplates.facebook(report);
 
-    // 4. Handle Scheduling
-    if (scheduledDate) {
-      report.publishSchedule = {
-        scheduledDate: new Date(scheduledDate),
-        channels: broadcastType === 'all' ? 
-          ["Push Notification", "SMS", "Facebook Post"] : 
-          [broadcastType]
-      };
-      await report.save();
-
-      return res.status(statusCodes.OK).json({
-        success: true,
-        msg: 'Broadcast scheduled successfully',
-        scheduledDate: report.publishSchedule.scheduledDate
-      });
-    }
-
-    // 5. Execute Broadcast
+    // 4. Execute Broadcast
     let broadcastResults = {};
     const broadcastRecord = {
       date: new Date(),
@@ -137,9 +119,12 @@ exports.publishReport = asyncHandler(async (req, res) => {
         break;
 
       case 'Facebook Post':
-        broadcastResults.facebook = await createFacebookPost(fbContent);
-        broadcastRecord.method.push('Facebook Post');
-        broadcastRecord.deliveryStats.facebook = 1;
+        broadcastResults.facebook = await createFacebookPost(report);
+        if (broadcastResults.facebook.success) {
+          broadcastRecord.method.push('Facebook Post');
+          broadcastRecord.deliveryStats.facebook = 1;
+          broadcastRecord.facebookPostId = broadcastResults.facebook.postId;
+        }
         break;
 
       case 'all':
@@ -158,7 +143,7 @@ exports.publishReport = asyncHandler(async (req, res) => {
             phones: targetUsers.map(u => u.number).filter(Boolean),
             message: smsContent.message
           }),
-          createFacebookPost(fbContent)
+          createFacebookPost(report)
         ]);
 
         broadcastResults = { push: pushResult, sms: smsResult, facebook: fbResult };
@@ -166,8 +151,11 @@ exports.publishReport = asyncHandler(async (req, res) => {
         broadcastRecord.deliveryStats = {
           push: allDeviceIds.length,
           sms: targetUsers.filter(u => u.number).length,
-          facebook: 1
+          facebook: fbResult.success ? 1 : 0
         };
+        if (fbResult.success) {
+          broadcastRecord.facebookPostId = fbResult.postId;
+        }
         break;
 
       default:
@@ -177,7 +165,7 @@ exports.publishReport = asyncHandler(async (req, res) => {
         });
     }
 
-    // 6. Create In-App Notifications
+    // 5. Create In-App Notifications
     if (targetUsers.length > 0) {
       try {
         const notificationResult = await notificationController.createBroadcastNotification({
@@ -198,7 +186,7 @@ exports.publishReport = asyncHandler(async (req, res) => {
       }
     }
 
-    // 7. Update Report & Save
+    // 6. Update Report & Save
     report.isPublished = true;
     report.broadcastHistory.push(broadcastRecord);
     await report.save();
@@ -228,9 +216,8 @@ exports.publishReport = asyncHandler(async (req, res) => {
 exports.unpublishReport = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
-    const { channels = [] } = req.body;
-
     const report = await Report.findById(reportId);
+    
     if (!report) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
@@ -238,7 +225,6 @@ exports.unpublishReport = asyncHandler(async (req, res) => {
       });
     }
 
-    // Find latest broadcast record
     const latestBroadcast = report.broadcastHistory[report.broadcastHistory.length - 1];
     
     if (latestBroadcast?.method.includes('Facebook Post') && latestBroadcast.facebookPostId) {
@@ -249,11 +235,9 @@ exports.unpublishReport = asyncHandler(async (req, res) => {
       }
     }
 
-    // Add unpublish record
     report.broadcastHistory.push({
       date: new Date(),
       action: 'unpublished',
-      method: channels,
       publishedBy: req.user.id
     });
 
@@ -279,7 +263,6 @@ exports.unpublishReport = asyncHandler(async (req, res) => {
 exports.getBroadcastHistory = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
-    
     const report = await Report.findById(reportId)
       .populate('broadcastHistory.publishedBy', 'firstName lastName');
 
@@ -293,8 +276,7 @@ exports.getBroadcastHistory = asyncHandler(async (req, res) => {
     res.status(statusCodes.OK).json({
       success: true,
       data: {
-        history: report.broadcastHistory,
-        schedule: report.publishSchedule
+        history: report.broadcastHistory
       }
     });
 

@@ -37,6 +37,14 @@ const sendPushNotification = async (message, recipients) => {
 // Create Facebook post
 const createFacebookPost = async (report) => {
   try {
+    // Validate report data
+    if (!report?.personInvolved) {
+      return { 
+        success: false, 
+        error: 'Invalid report data for Facebook post' 
+      };
+    }
+
     const content = broadcastTemplates.facebook(report);
     const url = `https://graph.facebook.com/${process.env.FACEBOOK_PAGE_ID}/feed`;
 
@@ -53,7 +61,10 @@ const createFacebookPost = async (report) => {
     };
   } catch (error) {
     console.error('Facebook post failed:', error);
-    return { success: false, error: error.message };
+    return { 
+      success: false, 
+      error: error.message 
+    };
   }
 };
 

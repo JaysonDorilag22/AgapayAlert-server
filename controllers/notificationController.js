@@ -8,15 +8,12 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
     const { page = 1, limit = 10, isRead, type } = req.query;
     const userId = req.user.id;
 
-    // Build query for user's notifications
     let query = { recipient: userId };
     
-    // Add read/unread filter
     if (typeof isRead === 'boolean') {
       query.isRead = isRead;
     }
 
-    // Add type filter
     if (type) {
       query.type = type;
     }
@@ -26,7 +23,6 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
         path: 'data.reportId',
         select: 'type status personInvolved.firstName personInvolved.lastName location.address'
       })
-      .populate('data.broadcastedBy', 'firstName lastName roles')
       .sort('-createdAt')
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
@@ -119,6 +115,93 @@ exports.markAsRead = asyncHandler(async (req, res) => {
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: 'Error updating notification',
+      error: error.message
+    });
+  }
+});
+
+// Get notification details by ID
+exports.getNotificationDetails = asyncHandler(async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    const userId = req.user.id;
+
+    const notification = await Notification.findOne({ 
+      _id: notificationId, 
+      recipient: userId 
+    })
+    .populate({
+      path: 'data.reportId',
+      select: 'type status personInvolved location additionalImages createdAt updatedAt',
+      populate: {
+        path: 'assignedPoliceStation',
+        select: 'name address contactNumber'
+      }
+    })
+    .populate({
+      path: 'data.finderReportId',
+      select: 'discoveryDetails personCondition images authoritiesNotified status',
+      populate: {
+        path: 'finder',
+        select: 'firstName lastName number email'
+      }
+    })
+    .populate('data.broadcastedBy', 'firstName lastName roles');
+
+    if (!notification) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: 'Notification not found'
+      });
+    }
+
+    // Format notification content based on type
+    let formattedContent;
+    switch (notification.type) {
+      case 'REPORT_CREATED':
+      case 'STATUS_UPDATED':
+      case 'ASSIGNED_OFFICER':
+        formattedContent = {
+          ...notification._doc,
+          reportDetails: notification.data.reportId,
+          assignedStation: notification.data.reportId?.assignedPoliceStation
+        };
+        break;
+
+      case 'FINDER_REPORT':
+        formattedContent = {
+          ...notification._doc,
+          finderDetails: notification.data.finderReportId,
+          originalReport: notification.data.reportId
+        };
+        break;
+
+      case 'BROADCAST_ALERT':
+        formattedContent = {
+          ...notification._doc,
+          reportDetails: notification.data.reportId,
+          broadcastInfo: {
+            type: notification.data.broadcastType,
+            scope: notification.data.scope,
+            broadcastedBy: notification.data.broadcastedBy
+          }
+        };
+        break;
+
+      default:
+        formattedContent = notification;
+    }
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: formattedContent
+    });
+
+  } catch (error) {
+    console.error('Error fetching notification details:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error retrieving notification details',
       error: error.message
     });
   }

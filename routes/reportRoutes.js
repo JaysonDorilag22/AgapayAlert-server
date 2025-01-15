@@ -32,7 +32,7 @@ router.get('/search', protect, authorizeRoles( roles.POLICE_OFFICER.role, roles.
 
 // Broadcast routes
 router.post('/broadcast/publish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role), broadcastController.publishReport);
-router.post('/broadcast/unpublish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), broadcastController.unpublishReport);
+router.post('/broadcast/unpublish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role), broadcastController.unpublishReport);
 router.get('/broadcast/history/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), broadcastController.getBroadcastHistory);
 
 //for testing purposes
