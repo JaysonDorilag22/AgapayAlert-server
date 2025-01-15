@@ -1,7 +1,7 @@
 const Notification = require('../models/notificationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
-
+const broadcastTypes = require('../utils/notificationTemplates');
 // Get user's notifications with pagination and filters
 exports.getUserNotifications = asyncHandler(async (req, res) => {
   try {
@@ -53,19 +53,38 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
 // Create broadcast notification for users in scope
 exports.createBroadcastNotification = async ({ body, user }) => {
   try {
-    const { reportId, recipients, broadcastType, scope } = body;
+    const { reportId, recipients, broadcastType, scope, report } = body;
 
+    if (!report) {
+      return {
+        success: false,
+        msg: 'Report data is required'
+      };
+    }
+
+    // Create notifications without template dependency
     const notificationPromises = recipients.map(userId => 
       Notification.create({
         recipient: userId,
         type: 'BROADCAST_ALERT',
-        title: 'Missing Person Alert',
+        title: `${report.type || 'Missing Person'} Alert`,
         message: `A new ${broadcastType} alert has been broadcast in your area`,
         data: {
           reportId,
           broadcastType,
           scope,
-          broadcastedBy: user?.id
+          broadcastedBy: user?.id,
+          reportType: report.type,
+          reportDetails: {
+            location: report.location,
+            type: report.type,
+            status: report.status,
+            personInvolved: {
+              name: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+              age: report.personInvolved.age,
+              lastSeen: report.personInvolved.lastSeenDate
+            }
+          }
         }
       })
     );
@@ -145,8 +164,7 @@ exports.getNotificationDetails = asyncHandler(async (req, res) => {
         path: 'finder',
         select: 'firstName lastName number email'
       }
-    })
-    .populate('data.broadcastedBy', 'firstName lastName roles');
+    });
 
     if (!notification) {
       return res.status(statusCodes.NOT_FOUND).json({
@@ -182,14 +200,19 @@ exports.getNotificationDetails = asyncHandler(async (req, res) => {
           reportDetails: notification.data.reportId,
           broadcastInfo: {
             type: notification.data.broadcastType,
-            scope: notification.data.scope,
-            broadcastedBy: notification.data.broadcastedBy
+            scope: notification.data.scope
           }
         };
         break;
 
       default:
         formattedContent = notification;
+    }
+
+    // Mark notification as read
+    if (!notification.isRead) {
+      notification.isRead = true;
+      await notification.save();
     }
 
     res.status(statusCodes.OK).json({

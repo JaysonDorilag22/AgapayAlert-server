@@ -173,11 +173,17 @@ exports.publishReport = asyncHandler(async (req, res) => {
             reportId: report._id,
             recipients: targetUsers.map(user => user._id),
             broadcastType,
-            scope
+            scope,
+            report: {
+              type: report.type,
+              location: report.location,
+              status: report.status,
+              personInvolved: report.personInvolved
+            }
           },
           user: req.user
         });
-
+    
         if (!notificationResult.success) {
           console.error('Notification creation failed:', notificationResult.msg);
         }

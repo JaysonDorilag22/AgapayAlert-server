@@ -8,20 +8,8 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: [
-      'REPORT_CREATED',
-      'STATUS_UPDATED', 
-      'ASSIGNED_OFFICER',
-      'FINDER_REPORT',
-      'BROADCAST_ALERT' 
-    ],
     required: true
   },
-  title: {
-    type: String,
-    required: true
-  },
-  message: String,
   data: {
     reportId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -30,8 +18,23 @@ const notificationSchema = new mongoose.Schema({
     finderReportId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'FinderReport'
+    },
+    broadcastType: String,
+    scope: {
+      type: {
+        type: String,
+        enum: ['city', 'radius', 'all']
+      },
+      city: String,
+      radius: Number
+    },
+    broadcastedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
     }
   },
+  title: String,
+  message: String,
   isRead: {
     type: Boolean,
     default: false
