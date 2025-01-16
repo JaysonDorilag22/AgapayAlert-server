@@ -9,6 +9,7 @@ const uploadToCloudinary = require('../utils/uploadToCloudinary');
 const { notifyPoliceStation } = require('../utils/notificationUtils');
 const cloudinary = require('cloudinary').v2;
 const { getCoordinatesFromAddress } = require('../utils/geocoding');
+const {sendOneSignalNotification} = require('../utils/notificationUtils');
 
 // Helper function to find police station
 const findPoliceStation = async (selectedId, coordinates) => {
@@ -455,91 +456,126 @@ exports.assignPoliceStation = asyncHandler(async (req, res) => {
 
 // Update User Report if the status is pending. Only Consent can be update if the status is in Assigned to Resolved
 exports.updateUserReport = asyncHandler(async (req, res) => {
-  const { reportId } = req.params;
-  const userId = req.user.id;
+  try {
+    const { reportId } = req.params;
+    const { status, followUp } = req.body;
+    const userId = req.user.id;
 
-  const report = await Report.findOne({ _id: reportId, reporter: userId });
-  if (!report) {
-    return res.status(statusCodes.NOT_FOUND).json({ 
-      msg: errorMessages.REPORT_NOT_FOUND 
+    // Check if user is assigned officer
+    const report = await Report.findById(reportId)
+      .populate('reporter')
+      .populate('assignedPoliceStation')
+      .populate('assignedOfficer');
+
+    if (!report) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: errorMessages.REPORT_NOT_FOUND
+      });
+    }
+
+    // Verify user is assigned officer
+    if (report.assignedOfficer?._id.toString() !== userId) {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        msg: 'Only assigned officers can update this report'
+      });
+    }
+
+    // Update report
+    if (status) report.status = status;
+    if (followUp) {
+      report.followUp.push({
+        note: followUp,
+        updatedBy: userId,
+        updatedAt: new Date()
+      });
+    }
+    await report.save();
+
+    // Notification promises
+    const notificationPromises = [];
+
+    // 1. Notify reporter
+    if (report.reporter?.deviceToken) {
+      notificationPromises.push(
+        // Push notification
+        sendOneSignalNotification({
+          include_player_ids: [report.reporter.deviceToken],
+          headings: { en: 'Report Update' },
+          contents: { en: `Your report status has been updated to: ${status}` },
+          data: {
+            type: 'STATUS_UPDATED',
+            reportId: report._id,
+            status: status
+          }
+        }),
+        // In-app notification
+        Notification.create({
+          recipient: report.reporter._id,
+          type: 'STATUS_UPDATED',
+          title: 'Report Update',
+          message: `Your report status has been updated to: ${status}`,
+          data: {
+            reportId: report._id,
+            status: status,
+            followUp: followUp ? report.followUp[report.followUp.length - 1] : null
+          }
+        })
+      );
+    }
+
+    // 2. Notify police admin
+    const policeAdmin = await User.findOne({
+      policeStation: report.assignedPoliceStation._id,
+      roles: 'police_admin'
+    });
+
+    if (policeAdmin?.deviceToken) {
+      notificationPromises.push(
+        // Push notification
+        sendOneSignalNotification({
+          include_player_ids: [policeAdmin.deviceToken],
+          headings: { en: 'Case Update' },
+          contents: { en: `Case ${report._id} has been updated by ${req.user.firstName}` },
+          data: {
+            type: 'CASE_UPDATED',
+            reportId: report._id,
+            status: status
+          }
+        }),
+        // In-app notification
+        Notification.create({
+          recipient: policeAdmin._id,
+          type: 'CASE_UPDATED',
+          title: 'Case Update',
+          message: `Case ${report._id} has been updated by ${req.user.firstName}`,
+          data: {
+            reportId: report._id,
+            status: status,
+            followUp: followUp ? report.followUp[report.followUp.length - 1] : null
+          }
+        })
+      );
+    }
+
+    // Send all notifications
+    await Promise.allSettled(notificationPromises);
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: 'Report updated successfully',
+      data: report
+    });
+
+  } catch (error) {
+    console.error('Error updating report:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error updating report',
+      error: error.message
     });
   }
-
-  if (report.status === 'Pending') {
-    // Full update allowed for pending reports
-    const { type, personInvolved, location, broadcastConsent } = req.body;
-    
-    // Handle most recent photo update
-    if (req.files?.['personInvolved[mostRecentPhoto]']) {
-      if (report.personInvolved?.mostRecentPhoto?.public_id) {
-        await cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id);
-      }
-
-      const photoFile = req.files['personInvolved[mostRecentPhoto]'][0];
-      const photoResult = await uploadToCloudinary(photoFile.path, 'reports');
-      personInvolved.mostRecentPhoto = {
-        url: photoResult.url,
-        public_id: photoResult.public_id,
-      };
-    }
-
-    // Update location coordinates if address changed
-    if (location && location.address) {
-      const geoData = await getCoordinatesFromAddress(location.address);
-      if (!geoData.success) {
-        return res.status(statusCodes.BAD_REQUEST).json({
-          msg: geoData.message
-        });
-      }
-      location.type = 'Point';
-      location.coordinates = geoData.coordinates;
-    }
-
-    // Track broadcast consent changes
-    if (broadcastConsent !== undefined && broadcastConsent !== report.broadcastConsent) {
-      report.consentUpdateHistory.push({
-        date: new Date(),
-        previousValue: report.broadcastConsent,
-        newValue: broadcastConsent,
-        updatedBy: userId
-      });
-      report.broadcastConsent = broadcastConsent;
-    }
-
-    Object.assign(report, {
-      type,
-      personInvolved,
-      location
-    });
-
-  } else if (!report.hasUpdatedConsent) {
-    // Only allow broadcast consent updates once after pending status
-    if (req.body.broadcastConsent !== undefined) {
-      report.consentUpdateHistory.push({
-        date: new Date(),
-        previousValue: report.broadcastConsent,
-        newValue: req.body.broadcastConsent,
-        updatedBy: userId
-      });
-      report.broadcastConsent = req.body.broadcastConsent;
-      report.hasUpdatedConsent = true;
-    } else {
-      return res.status(statusCodes.BAD_REQUEST).json({
-        msg: 'Only broadcast consent can be updated at this stage'
-      });
-    }
-  } else {
-    return res.status(statusCodes.FORBIDDEN).json({
-      msg: 'Report cannot be updated at this stage or consent already updated'
-    });
-  }
-
-  await report.save();
-  res.status(statusCodes.OK).json({ 
-    success: true,
-    msg: 'Report updated successfully',
-    data: report
-  });
 });
 
 // Assign an officer to a report
@@ -553,8 +589,11 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
     });
   }
 
+  // Get report with populated fields
   const report = await Report.findById(reportId)
-    .populate('assignedPoliceStation');
+    .populate('assignedPoliceStation')
+    .populate('reporter')
+    .populate('personInvolved');
 
   if (!report) {
     return res.status(statusCodes.NOT_FOUND).json({ 
@@ -562,7 +601,7 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
     });
   }
 
-  // Check if the officer exists and belongs to the same police station
+  // Get officer details
   const officer = await User.findOne({ 
     _id: officerId,
     roles: 'police_officer',
@@ -575,16 +614,110 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
     });
   }
 
+  // Update report
   report.assignedOfficer = officer._id;
   report.status = 'Under Investigation';
   await report.save();
 
-  // Notify the assigned officer
-  await notifyPoliceStation(report, report.assignedPoliceStation);
+  // Prepare notification data
+  const notificationPromises = [];
 
-  res.status(statusCodes.OK).json(report);
+  // 1. Officer notifications
+  notificationPromises.push(
+    // In-app notification
+    Notification.create({
+      recipient: officer._id,
+      type: 'ASSIGNED_OFFICER',
+      title: 'New Case Assignment',
+      message: `You have been assigned to a ${report.type} case for ${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+      data: {
+        reportId: report._id,
+        type: report.type,
+        reportDetails: {
+          location: report.location,
+          status: report.status,
+          personInvolved: {
+            name: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+            age: report.personInvolved.age
+          }
+        }
+      }
+    })
+  );
+
+  // Push notification for officer
+  if (officer.deviceToken) {
+    notificationPromises.push(
+      sendOneSignalNotification({
+        include_player_ids: [officer.deviceToken],
+        headings: { en: 'New Case Assignment' },
+        contents: { en: `You have been assigned to a ${report.type} case` },
+        data: {
+          type: 'ASSIGNED_OFFICER',
+          reportId: report._id,
+          caseType: report.type
+        }
+      })
+    );
+  }
+
+  // 2. Reporter notifications
+  if (report.reporter) {
+    // In-app notification
+    notificationPromises.push(
+      Notification.create({
+        recipient: report.reporter._id,
+        type: 'STATUS_UPDATED',
+        title: 'Report Update',
+        message: `Your report has been assigned to an investigating officer`,
+        data: {
+          reportId: report._id,
+          status: report.status,
+          assignedOfficer: {
+            name: `${officer.firstName} ${officer.lastName}`,
+            badge: officer.badgeNumber
+          }
+        }
+      })
+    );
+
+    // Push notification for reporter
+    if (report.reporter.deviceToken) {
+      notificationPromises.push(
+        sendOneSignalNotification({
+          include_player_ids: [report.reporter.deviceToken],
+          headings: { en: 'Report Update' },
+          contents: { en: 'Your report has been assigned to an investigating officer' },
+          data: {
+            type: 'STATUS_UPDATED',
+            reportId: report._id,
+            status: report.status
+          }
+        })
+      );
+    }
+  }
+
+  // Send all notifications
+  try {
+    await Promise.allSettled(notificationPromises);
+  } catch (error) {
+    console.error('Notification error:', error);
+  }
+
+  res.status(statusCodes.OK).json({
+    success: true,
+    msg: 'Officer assigned successfully',
+    data: {
+      report,
+      assignedOfficer: {
+        id: officer._id,
+        name: `${officer.firstName} ${officer.lastName}`,
+        badge: officer.badgeNumber
+      }
+    }
+  });
 });
-
 
 exports.getPublicFeed = asyncHandler(async (req, res) => {
   try {
@@ -999,4 +1132,128 @@ exports.searchReports = asyncHandler(async (req, res) => {
 });
 
 
-// Get Report Details
+// Reassign report to different police station
+exports.reassignPoliceStation = asyncHandler(async (req, res) => {
+  try {
+    const { reportId, newStationId } = req.body;
+    
+    // Authorization check
+    if (!req.user.roles.some(role => ['city_admin', 'super_admin'].includes(role))) {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        msg: 'Only city admin or super admin can reassign police stations'
+      });
+    }
+
+    // Get report details
+    const report = await Report.findById(reportId)
+      .populate('assignedPoliceStation')
+      .populate('reporter');
+    
+    if (!report) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: errorMessages.REPORT_NOT_FOUND
+      });
+    }
+
+    // Get new station
+    const newStation = await PoliceStation.findById(newStationId);
+    if (!newStation) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: 'New police station not found'
+      });
+    }
+
+    const oldStation = report.assignedPoliceStation;
+    
+    // Update report
+    report.assignedPoliceStation = newStationId;
+    report.assignedOfficer = null;
+    await report.save();
+
+    // Notification promises array
+    const notificationPromises = [];
+
+    // 1. Notify old station admins
+    const oldStationAdmins = await User.find({
+      policeStation: oldStation._id,
+      roles: 'police_admin',
+      deviceToken: { $exists: true }
+    });
+
+    oldStationAdmins.forEach(admin => {
+      notificationPromises.push(
+        sendOneSignalNotification({
+          include_player_ids: [admin.deviceToken],
+          headings: { en: 'Report Reassigned' },
+          contents: { en: `Report #${report._id} has been reassigned to ${newStation.name}` },
+          data: { 
+            type: 'REPORT_REASSIGNED',
+            reportId: report._id 
+          }
+        })
+      );
+    });
+
+    // 2. Notify new station admins
+    const newStationAdmins = await User.find({
+      policeStation: newStationId,
+      roles: 'police_admin',
+      deviceToken: { $exists: true }
+    });
+
+    newStationAdmins.forEach(admin => {
+      notificationPromises.push(
+        sendOneSignalNotification({
+          include_player_ids: [admin.deviceToken],
+          headings: { en: 'New Report Assignment' },
+          contents: { en: `A new report has been assigned to your station` },
+          data: { 
+            type: 'NEW_REPORT_ASSIGNED',
+            reportId: report._id 
+          }
+        })
+      );
+    });
+
+    // 3. Notify reporter
+    if (report.reporter?.deviceToken) {
+      notificationPromises.push(
+        sendOneSignalNotification({
+          include_player_ids: [report.reporter.deviceToken],
+          headings: { en: 'Report Update' },
+          contents: { en: `Your report has been reassigned to ${newStation.name}` },
+          data: { 
+            type: 'REPORT_REASSIGNED',
+            reportId: report._id,
+            oldStation: oldStation.name,
+            newStation: newStation.name
+          }
+        })
+      );
+    }
+
+    // Send all notifications
+    await Promise.allSettled(notificationPromises);
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: `Report reassigned to ${newStation.name}`,
+      data: {
+        report,
+        oldStation: oldStation.name,
+        newStation: newStation.name
+      }
+    });
+
+  } catch (error) {
+    console.error('Error reassigning police station:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error reassigning police station',
+      error: error.message
+    });
+  }
+});
