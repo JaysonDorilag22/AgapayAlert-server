@@ -7,31 +7,34 @@ const path = require('path');
 const roles = require('../constants/roles');
 const { broadcastTemplates, policeTemplates, userTemplates } = require('./contentTemplates');
 const dotenv = require('dotenv');
-
+const NOTIFICATION_SOUNDS = require('../constants/alertSound');
 dotenv.config();
 
-const sendOneSignalNotification = async (notificationData) => {
-  try {
-    if (!notificationData.include_player_ids?.length) {
-      return { success: false, msg: 'No valid device tokens provided' };
+const sendOneSignalNotification = async (notificationData, maxRetries = 3) => {
+  const validateInput = (data) => {
+    if (!data.include_player_ids?.length) {
+      throw new Error('No valid device tokens provided');
     }
+    if (!data.message) {
+      throw new Error('Notification message is required');
+    }
+  };
 
-    const notification = {
-      app_id: process.env.ONESIGNAL_APP_ID,
-      include_player_ids: notificationData.include_player_ids,
-      contents: { en: notificationData.message },
-      headings: { en: notificationData.title || "AgapayAlert Notification" },
-      data: {
-        ...notificationData.data,
-        type: notificationData.data?.type || 'GENERAL',
-        createdAt: new Date().toISOString()
-      },
-      big_picture: notificationData.image,
-      ios_attachments: notificationData.image ? { id1: notificationData.image } : undefined,
-      priority: 10,
-      ttl: 86400
-    };
+  validateInput(notificationData);
 
+  const notification = {
+    app_id: process.env.ONESIGNAL_APP_ID,
+    include_player_ids: notificationData.include_player_ids,
+    contents: { en: notificationData.message },
+    headings: { en: notificationData.title || "AgapayAlert" },
+    data: notificationData.data,
+    ios_sound: "Alert.wav",
+    android_sound: "alert",
+    priority: 10,
+    ttl: 86400
+  };
+
+  try {
     const response = await axios.post(
       'https://onesignal.com/api/v1/notifications',
       notification,
@@ -39,21 +42,19 @@ const sendOneSignalNotification = async (notificationData) => {
         headers: {
           'Authorization': `Basic ${process.env.ONESIGNAL_API_KEY}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 5000
       }
     );
 
-    return { 
-      success: true, 
-      data: response.data,
-      stats: {
-        recipientCount: notificationData.include_player_ids.length,
-        successfully_sent: response.data?.recipients || 0
-      }
-    };
+    return response.data;
   } catch (error) {
-    console.error('OneSignal failed:', error);
-    return { success: false, error: error.message };
+    console.error('OneSignal Error:', {
+      message: error.message,
+      response: error.response?.data,
+      payload: notification
+    });
+    throw error;
   }
 };
 

@@ -37,33 +37,38 @@ const sendPushNotification = async (message, recipients) => {
 // Create Facebook post
 const createFacebookPost = async (report) => {
   try {
-    // Validate report data
-    if (!report?.personInvolved) {
-      return { 
-        success: false, 
-        error: 'Invalid report data for Facebook post' 
-      };
-    }
-
     const content = broadcastTemplates.facebook(report);
-    const url = `https://graph.facebook.com/${process.env.FACEBOOK_PAGE_ID}/feed`;
-
-    const response = await axios.post(url, {
-      message: content.message,
-      access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
-      link: content.image
-    });
     
+    // Use newer Graph API endpoint for photos
+    const url = `https://graph.facebook.com/v22.0/${process.env.FACEBOOK_PAGE_ID}/photos`;
+    
+    const formData = {
+      caption: content.message,
+      url: content.image,
+      access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN
+    };
+
+    const response = await axios.post(url, formData, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
     return {
       success: true,
       postId: response.data.id,
       data: response.data
     };
+
   } catch (error) {
-    console.error('Facebook post failed:', error);
-    return { 
-      success: false, 
-      error: error.message 
+    console.error('Facebook API Error:', {
+      message: error.response?.data?.error?.message,
+      code: error.response?.data?.error?.code,
+      type: error.response?.data?.error?.type
+    });
+    return {
+      success: false,
+      error: error.response?.data?.error?.message || error.message
     };
   }
 };

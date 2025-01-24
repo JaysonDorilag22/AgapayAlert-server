@@ -10,6 +10,7 @@ const { notifyPoliceStation } = require('../utils/notificationUtils');
 const cloudinary = require('cloudinary').v2;
 const { getCoordinatesFromAddress } = require('../utils/geocoding');
 const {sendOneSignalNotification} = require('../utils/notificationUtils');
+const { isLastSeenMoreThan24Hours } = require('../utils/isLastSeenMoreThan24Hours');
 
 // Helper function to find police station
 const findPoliceStation = async (selectedId, coordinates) => {
@@ -57,6 +58,23 @@ exports.createReport = asyncHandler(async (req, res) => {
       location,
       selectedPoliceStation,
     } = req.body;
+
+
+    // Check last seen time for Missing Person reports
+    if (type === 'Missing') {
+      const timeCheck = isLastSeenMoreThan24Hours(
+        personInvolved.lastSeenDate,
+        personInvolved.lastSeentime
+      );
+
+      if (!timeCheck.isMoreThan24Hours) {
+        return res.status(statusCodes.BAD_REQUEST).json({
+          success: false,
+          msg: `Person has been missing for only ${timeCheck.hoursPassed} hours. Cases less than 24 hours are classified as 'Absent Person' reports.`,
+          suggestedType: 'Absent'
+        });
+      }
+    }
 
     const broadcastConsent = req.body.broadcastConsent === 'true';
 
@@ -454,115 +472,99 @@ exports.assignPoliceStation = asyncHandler(async (req, res) => {
   res.status(statusCodes.OK).json(report);
 });
 
-// Update User Report if the status is pending. Only Consent can be update if the status is in Assigned to Resolved
 exports.updateUserReport = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
     const { status, followUp } = req.body;
     const userId = req.user.id;
 
-    // Check if user is assigned officer
+    // Input validation
+    if (!reportId || !userId) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Report ID and User ID are required'
+      });
+    }
+
+    // Find report with required populated fields
     const report = await Report.findById(reportId)
-      .populate('reporter')
-      .populate('assignedPoliceStation')
-      .populate('assignedOfficer');
+      .populate({
+        path: 'reporter',
+        select: 'deviceToken'
+      })
+      .populate({
+        path: 'assignedPoliceStation',
+        select: '_id name'
+      })
+      .populate({
+        path: 'assignedOfficer',
+        select: '_id firstName lastName'
+      });
 
     if (!report) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: errorMessages.REPORT_NOT_FOUND
+        msg: 'Report not found'
       });
     }
 
-    // Verify user is assigned officer
-    if (report.assignedOfficer?._id.toString() !== userId) {
-      return res.status(statusCodes.FORBIDDEN).json({
-        success: false,
-        msg: 'Only assigned officers can update this report'
-      });
-    }
-
-    // Update report
+    // Update report fields
     if (status) report.status = status;
-    if (followUp) {
+    
+    // Handle followUp
+    if (followUp && typeof followUp === 'string') {
+      if (!report.followUp) report.followUp = [];
       report.followUp.push({
         note: followUp,
-        updatedBy: userId,
-        updatedAt: new Date()
+        date: new Date()
       });
     }
+
     await report.save();
 
-    // Notification promises
+    // Handle notifications
     const notificationPromises = [];
 
-    // 1. Notify reporter
+    // Reporter notification
     if (report.reporter?.deviceToken) {
       notificationPromises.push(
-        // Push notification
         sendOneSignalNotification({
           include_player_ids: [report.reporter.deviceToken],
-          headings: { en: 'Report Update' },
-          contents: { en: `Your report status has been updated to: ${status}` },
-          data: {
-            type: 'STATUS_UPDATED',
-            reportId: report._id,
-            status: status
-          }
-        }),
-        // In-app notification
-        Notification.create({
-          recipient: report.reporter._id,
-          type: 'STATUS_UPDATED',
           title: 'Report Update',
           message: `Your report status has been updated to: ${status}`,
           data: {
-            reportId: report._id,
-            status: status,
-            followUp: followUp ? report.followUp[report.followUp.length - 1] : null
+            type: 'STATUS_UPDATED',
+            reportId: report._id.toString(),
+            status
           }
         })
       );
     }
 
-    // 2. Notify police admin
-    const policeAdmin = await User.findOne({
-      policeStation: report.assignedPoliceStation._id,
-      roles: 'police_admin'
-    });
+    // Police admin notification
+    // const policeAdmin = await User.findOne({
+    //   policeStation: report.assignedPoliceStation._id,
+    //   roles: 'police_admin'
+    // }).select('deviceToken');
 
-    if (policeAdmin?.deviceToken) {
-      notificationPromises.push(
-        // Push notification
-        sendOneSignalNotification({
-          include_player_ids: [policeAdmin.deviceToken],
-          headings: { en: 'Case Update' },
-          contents: { en: `Case ${report._id} has been updated by ${req.user.firstName}` },
-          data: {
-            type: 'CASE_UPDATED',
-            reportId: report._id,
-            status: status
-          }
-        }),
-        // In-app notification
-        Notification.create({
-          recipient: policeAdmin._id,
-          type: 'CASE_UPDATED',
-          title: 'Case Update',
-          message: `Case ${report._id} has been updated by ${req.user.firstName}`,
-          data: {
-            reportId: report._id,
-            status: status,
-            followUp: followUp ? report.followUp[report.followUp.length - 1] : null
-          }
-        })
-      );
-    }
+    // if (policeAdmin?.deviceToken) {
+    //   notificationPromises.push(
+    //     sendOneSignalNotification({
+    //       include_player_ids: [policeAdmin.deviceToken],
+    //       title: 'Case Update',
+    //       message: `Case ${report._id} status updated to: ${status}`,
+    //       data: {
+    //         type: 'CASE_UPDATED',
+    //         reportId: report._id.toString(),
+    //         status
+    //       }
+    //     })
+    //   );
+    // }
 
-    // Send all notifications
     await Promise.allSettled(notificationPromises);
 
-    res.status(statusCodes.OK).json({
+    return res.status(statusCodes.OK).json({
       success: true,
       msg: 'Report updated successfully',
       data: report
@@ -570,9 +572,9 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
 
   } catch (error) {
     console.error('Error updating report:', error);
-    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+    return res.status(statusCodes.SERVER_ERROR).json({
       success: false,
-      msg: 'Error updating report',
+      msg: 'Failed to update report',
       error: error.message
     });
   }
@@ -616,7 +618,7 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
 
   // Update report
   report.assignedOfficer = officer._id;
-  report.status = 'Under Investigation';
+  report.status = 'Assigned';
   await report.save();
 
   // Prepare notification data

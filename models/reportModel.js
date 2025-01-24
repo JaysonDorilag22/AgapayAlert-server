@@ -10,7 +10,7 @@ const reportSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["Missing", "Abducted", "Kidnapped", "Hit-and-Run"],
+      enum: ["Absent","Missing", "Abducted", "Kidnapped", "Hit-and-Run"],
       required: [true, "Report type is required"],
     },
     personInvolved: {
@@ -122,9 +122,10 @@ const reportSchema = new mongoose.Schema(
       default: "Pending",
     },
 
-    followUp: {
-      type: String,
-    },
+    followUp: [{
+      note: String,
+      updatedAt: Date
+    }],
 
     broadcastConsent: {
       type: Boolean,

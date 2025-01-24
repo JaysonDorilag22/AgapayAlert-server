@@ -23,8 +23,6 @@ const statusCodes = require('../constants/statusCodes');
 // Helper for role-based queries
 const getRoleBasedQuery = async (user, baseQuery = {}) => {
   try {
-    console.log('User Role:', user.roles[0]);
-    console.log('User City:', user.address?.city);
 
     switch(user.roles[0]) {
       case 'police_officer':

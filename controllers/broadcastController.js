@@ -7,6 +7,7 @@ const { createFacebookPost, deleteFacebookPost } = require('../utils/broadcastUt
 const notificationController = require('./notificationController')
 const axios = require('axios');
 const {broadcastTemplates} = require('../utils/contentTemplates');
+const {NOTIFICATION_SOUNDS} = require('../constants/alertSound');
 
 // Publish Report
 exports.publishReport = asyncHandler(async (req, res) => {
@@ -118,14 +119,29 @@ exports.publishReport = asyncHandler(async (req, res) => {
         broadcastRecord.deliveryStats.sms = phones.length;
         break;
 
-      case 'Facebook Post':
-        broadcastResults.facebook = await createFacebookPost(report);
-        if (broadcastResults.facebook.success) {
-          broadcastRecord.method.push('Facebook Post');
-          broadcastRecord.deliveryStats.facebook = 1;
-          broadcastRecord.facebookPostId = broadcastResults.facebook.postId;
-        }
-        break;
+        case 'Facebook Post':
+          try {
+            broadcastResults.facebook = await createFacebookPost(report);
+            if (broadcastResults.facebook.success) {
+              broadcastRecord.method.push('Facebook Post');
+              broadcastRecord.deliveryStats.facebook = 1;
+              broadcastRecord.facebookPostId = broadcastResults.facebook.postId;
+              
+              // Add Facebook-specific notification details
+              broadcastRecord.notes = 'Posted successfully to Facebook page';
+            } else {
+              console.error('Facebook post creation failed:', broadcastResults.facebook.error);
+              broadcastRecord.notes = `Facebook post failed: ${broadcastResults.facebook.error}`;
+            }
+          } catch (fbError) {
+            console.error('Facebook post error:', fbError);
+            broadcastResults.facebook = { 
+              success: false, 
+              error: fbError.message 
+            };
+            broadcastRecord.notes = `Facebook post error: ${fbError.message}`;
+          }
+          break;
 
       case 'all':
         const allDeviceIds = targetUsers.map(user => user.deviceToken).filter(Boolean);
@@ -297,41 +313,23 @@ exports.getBroadcastHistory = asyncHandler(async (req, res) => {
 });
 
 // In broadcastController.js
+
 exports.testAdminNotification = asyncHandler(async (req, res) => {
   try {
-    // 1. Find admin users with device tokens
-    const adminUsers = await User.find({ 
-      roles: 'city_admin',
-      deviceToken: { $exists: true, $ne: null }
-    });
-
-    if (!adminUsers.length) {
-      return res.status(statusCodes.NOT_FOUND).json({
-        success: false,
-        msg: 'No city admin users found with device tokens'
-      });
-    }
-
-    // 2. Setup notification with filters
     const notification = {
       app_id: process.env.ONESIGNAL_APP_ID,
-      filters: [
-        {
-          field: "tag",
-          key: "role",
-          relation: "=",
-          value: "city_admin"
-        }
-      ],
+      included_segments: ["All"], // Send to all subscribed users
       contents: { 
         en: "Test notification for city admins only" 
       },
       headings: { 
         en: "Admin Test Alert" 
-      }
+      },
+      ios_sound: "../constants/alert.wav", 
+      android_sound: "../constants/alert.wav",
+      priority: 10
     };
 
-    // 3. Send notification
     const response = await axios.post(
       'https://onesignal.com/api/v1/notifications',
       notification,
@@ -343,13 +341,8 @@ exports.testAdminNotification = asyncHandler(async (req, res) => {
       }
     );
 
-    // 4. Return results
     res.status(statusCodes.OK).json({
       success: true,
-      stats: {
-        adminsFound: adminUsers.length,
-        deviceTokens: adminUsers.map(u => u.deviceToken)
-      },
       notification: response.data
     });
 
