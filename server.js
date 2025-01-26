@@ -18,6 +18,7 @@ const finderReportRoutes = require('./routes/finderReportRoutes')
 const notificationRoutes = require('./routes/notificationRoutes');
 const chartRoutes = require('./routes/chartRoutes');
 const alprRoutes = require('./routes/alprRoutes');
+const feedbackRoutes = require('./routes/feedbackRoutes');
 dotenv.config();
 
 const app = express();

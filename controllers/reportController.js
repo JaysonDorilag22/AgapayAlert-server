@@ -195,6 +195,236 @@ exports.createReport = asyncHandler(async (req, res) => {
   }
 });
 
+// Update a report when it's still pending 
+exports.updateReport = asyncHandler(async (req, res) => {
+  const { reportId } = req.params;
+  const { status, followUp, removeImages } = req.body;
+  const userId = req.user.id;
+
+  const report = await Report.findById(reportId)
+    .populate('reporter', 'deviceToken');
+  
+  if (!report) {
+    return res.status(statusCodes.NOT_FOUND).json({
+      success: false,
+      msg: errorMessages.REPORT_NOT_FOUND
+    });
+  }
+
+  // Check if user is reporter or police officer
+  const isReporter = report.reporter._id.toString() === userId;
+  const isOfficer = req.user.roles.includes('police');
+
+  if (!isReporter && !isOfficer) {
+    return res.status(statusCodes.FORBIDDEN).json({
+      success: false,
+      msg: 'Not authorized to update this report'
+    });
+  }
+
+  // Handle image updates only if pending or police officer
+  if ((report.status === 'Pending' || isOfficer) && req.files) {
+    try {
+      // Update main photo if provided
+      if (req.files['personInvolved[mostRecentPhoto]']) {
+        // Delete old photo from Cloudinary
+        if (report.personInvolved.mostRecentPhoto?.public_id) {
+          await cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id);
+        }
+
+        const photoFile = req.files['personInvolved[mostRecentPhoto]'][0];
+        const photoResult = await uploadToCloudinary(photoFile.path, 'reports');
+        
+        report.personInvolved.mostRecentPhoto = {
+          url: photoResult.url,
+          public_id: photoResult.public_id
+        };
+      }
+
+      // Handle additional images
+      if (req.files.additionalImages) {
+        const uploadPromises = req.files.additionalImages.map(file => 
+          uploadToCloudinary(file.path, 'reports')
+        );
+        
+        const uploadResults = await Promise.all(uploadPromises);
+        const newImages = uploadResults.map(result => ({
+          url: result.url,
+          public_id: result.public_id,
+          uploadedBy: userId,
+          uploadedAt: new Date()
+        }));
+        
+        report.additionalImages.push(...newImages);
+      }
+    } catch (uploadError) {
+      console.error('Image upload failed:', uploadError);
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Failed to upload images'
+      });
+    }
+  }
+
+  // Remove images if requested and allowed
+  if (removeImages && (report.status === 'Pending' || isOfficer)) {
+    const imagesToRemove = Array.isArray(removeImages) ? removeImages : [removeImages];
+    for (const imageId of imagesToRemove) {
+      const imageIndex = report.additionalImages.findIndex(img => 
+        img.public_id === imageId || img._id.toString() === imageId
+      );
+      
+      if (imageIndex !== -1) {
+        const image = report.additionalImages[imageIndex];
+        await cloudinary.uploader.destroy(image.public_id);
+        report.additionalImages.splice(imageIndex, 1);
+      }
+    }
+  }
+
+  // Handle status updates (police only)
+  if (status && isOfficer) {
+    const validStatuses = ['Pending', 'Assigned', 'Under Investigation', 'Resolved', 'Archived'];
+    if (!validStatuses.includes(status)) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Invalid status value'
+      });
+    }
+
+    report.statusHistory.push({
+      previousStatus: report.status,
+      newStatus: status,
+      updatedBy: userId,
+      updatedAt: new Date()
+    });
+    report.status = status;
+  }
+
+  // Handle follow-up updates
+  if (followUp) {
+    report.followUp.push({
+      note: followUp,
+      date: new Date()
+    });
+  }
+
+  try {
+    await report.save();
+
+    // Create notification for reporter if updated by officer
+    if (isOfficer && !isReporter) {
+      await Notification.create({
+        recipient: report.reporter._id,
+        type: status ? 'STATUS_UPDATED' : 'REPORT_UPDATED',
+        title: status ? 'Report Status Updated' : 'Report Updated',
+        message: status 
+          ? `Your report status has been updated to ${status}`
+          : 'Your report has been updated with new information',
+        data: {
+          reportId: report._id,
+          status: status || report.status,
+          updatedBy: userId
+        }
+      });
+    }
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: 'Report updated successfully',
+      data: report
+    });
+
+  } catch (error) {
+    console.error('Error updating report:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Failed to update report',
+      error: error.message
+    });
+  }
+});
+
+//Updating Status of a Report
+exports.updateUserReport = asyncHandler(async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const { status } = req.body;
+    const userId = req.user.id;
+
+    if (!status) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Status is required'
+      });
+    }
+
+    const report = await Report.findById(reportId)
+      .populate('reporter', 'deviceToken')
+      .populate('assignedPoliceStation', '_id name')
+      .populate('assignedOfficer', '_id firstName lastName');
+
+    if (!report) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: 'Report not found'
+      });
+    }
+
+    // Validate status change
+    const validStatuses = ['Pending', 'Assigned', 'Under Investigation', 'Resolved', 'Archived'];
+    if (!validStatuses.includes(status)) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Invalid status value'
+      });
+    }
+
+    // Update status
+    report.status = status;
+    report.statusHistory.push({
+      previousStatus: report.status,
+      newStatus: status,
+      updatedBy: userId,
+      updatedAt: new Date()
+    });
+
+    await report.save();
+
+    // Handle notifications
+    if (report.reporter?.deviceToken) {
+      await sendOneSignalNotification({
+        include_player_ids: [report.reporter.deviceToken],
+        title: 'Report Status Update',
+        message: `Your report status has been updated to: ${status}`,
+        data: {
+          type: 'STATUS_UPDATED',
+          reportId: report._id.toString(),
+          status
+        }
+      });
+    }
+
+    return res.status(statusCodes.OK).json({
+      success: true,
+      msg: 'Report status updated successfully',
+      data: {
+        reportId: report._id,
+        status: report.status,
+        updatedAt: new Date()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating report status:', error);
+    return res.status(statusCodes.SERVER_ERROR).json({
+      success: false,
+      msg: 'Failed to update report status',
+      error: error.message
+    });
+  }
+});
+
 // Get Reports (with filters)
 exports.getReports = asyncHandler(async (req, res) => {
   try {
@@ -278,125 +508,6 @@ exports.getReports = asyncHandler(async (req, res) => {
   }
 });
 
-// Update Report (Police)
-exports.updateReport = asyncHandler(async (req, res) => {
-  const { reportId } = req.params;
-  const { status, followUp } = req.body;
-  const isOfficer = req.user.roles.includes('police');
-
-  // Validate officer access
-  if (!isOfficer) {
-    return res.status(statusCodes.FORBIDDEN).json({
-      success: false,
-      msg: 'Only police officers can update reports'
-    });
-  }
-
-  // Validate status if provided
-  const validStatuses = ['Pending', 'Assigned', 'Under Investigation', 'Resolved', 'Archived'];
-  if (status && !validStatuses.includes(status)) {
-    return res.status(statusCodes.BAD_REQUEST).json({
-      success: false,
-      msg: 'Invalid status value'
-    });
-  }
-
-  // Get and validate report
-  const report = await Report.findById(reportId)
-    .populate('reporter', 'deviceToken');
-  
-  if (!report) {
-    return res.status(statusCodes.NOT_FOUND).json({
-      success: false,
-      msg: errorMessages.REPORT_NOT_FOUND
-    });
-  }
-
-  // Update status if provided
-  if (status) {
-    report.statusHistory.push({
-      previousStatus: report.status,
-      newStatus: status,
-      updatedBy: req.user.id,
-      updatedAt: new Date()
-    });
-    report.status = status;
-  }
-
-  // Update follow-up if provided
-  if (followUp) {
-    report.followUp.push({
-      details: followUp,
-      addedBy: req.user.id,
-      addedAt: new Date()
-    });
-  }
-
-  // Handle additional images
-  if (req.files?.additionalImages) {
-    const uploadPromises = req.files.additionalImages.map(file => 
-      uploadToCloudinary(file.path, 'reports')
-    );
-    
-    try {
-      const uploadResults = await Promise.all(uploadPromises);
-      const newImages = uploadResults.map(result => ({
-        url: result.url,
-        public_id: result.public_id,
-        uploadedBy: req.user.id,
-        uploadedAt: new Date()
-      }));
-      
-      report.additionalImages.push(...newImages);
-    } catch (uploadError) {
-      console.error('Image upload failed:', uploadError);
-      return res.status(statusCodes.BAD_REQUEST).json({
-        success: false,
-        msg: 'Failed to upload images'
-      });
-    }
-  }
-
-  try {
-    await report.save();
-
-    // Create notification for reporter
-    const notificationData = {
-      recipient: report.reporter._id,
-      type: status ? 'STATUS_UPDATED' : 'REPORT_UPDATED',
-      title: status ? 'Report Status Updated' : 'Report Updated',
-      message: status 
-        ? `Your report status has been updated to ${status}`
-        : 'Your report has been updated with new information',
-      data: {
-        reportId: report._id,
-        status: status || report.status,
-        updatedBy: req.user.id
-      }
-    };
-
-    await Notification.create(notificationData);
-
-    // Return success response
-    res.status(statusCodes.OK).json({
-      success: true,
-      msg: 'Report updated successfully',
-      data: {
-        report,
-        notification: notificationData
-      }
-    });
-
-  } catch (error) {
-    console.error('Error updating report:', error);
-    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
-      success: false,
-      msg: 'Failed to update report',
-      error: error.message
-    });
-  }
-});
-
 // Delete Report
 exports.deleteReport = asyncHandler(async (req, res) => {
   const { reportId } = req.params;
@@ -470,114 +581,6 @@ exports.assignPoliceStation = asyncHandler(async (req, res) => {
   await notifyPoliceStation(report, policeStation);
 
   res.status(statusCodes.OK).json(report);
-});
-
-exports.updateUserReport = asyncHandler(async (req, res) => {
-  try {
-    const { reportId } = req.params;
-    const { status, followUp } = req.body;
-    const userId = req.user.id;
-
-    // Input validation
-    if (!reportId || !userId) {
-      return res.status(statusCodes.BAD_REQUEST).json({
-        success: false,
-        msg: 'Report ID and User ID are required'
-      });
-    }
-
-    // Find report with required populated fields
-    const report = await Report.findById(reportId)
-      .populate({
-        path: 'reporter',
-        select: 'deviceToken'
-      })
-      .populate({
-        path: 'assignedPoliceStation',
-        select: '_id name'
-      })
-      .populate({
-        path: 'assignedOfficer',
-        select: '_id firstName lastName'
-      });
-
-    if (!report) {
-      return res.status(statusCodes.NOT_FOUND).json({
-        success: false,
-        msg: 'Report not found'
-      });
-    }
-
-    // Update report fields
-    if (status) report.status = status;
-    
-    // Handle followUp
-    if (followUp && typeof followUp === 'string') {
-      if (!report.followUp) report.followUp = [];
-      report.followUp.push({
-        note: followUp,
-        date: new Date()
-      });
-    }
-
-    await report.save();
-
-    // Handle notifications
-    const notificationPromises = [];
-
-    // Reporter notification
-    if (report.reporter?.deviceToken) {
-      notificationPromises.push(
-        sendOneSignalNotification({
-          include_player_ids: [report.reporter.deviceToken],
-          title: 'Report Update',
-          message: `Your report status has been updated to: ${status}`,
-          data: {
-            type: 'STATUS_UPDATED',
-            reportId: report._id.toString(),
-            status
-          }
-        })
-      );
-    }
-
-    // Police admin notification
-    // const policeAdmin = await User.findOne({
-    //   policeStation: report.assignedPoliceStation._id,
-    //   roles: 'police_admin'
-    // }).select('deviceToken');
-
-    // if (policeAdmin?.deviceToken) {
-    //   notificationPromises.push(
-    //     sendOneSignalNotification({
-    //       include_player_ids: [policeAdmin.deviceToken],
-    //       title: 'Case Update',
-    //       message: `Case ${report._id} status updated to: ${status}`,
-    //       data: {
-    //         type: 'CASE_UPDATED',
-    //         reportId: report._id.toString(),
-    //         status
-    //       }
-    //     })
-    //   );
-    // }
-
-    await Promise.allSettled(notificationPromises);
-
-    return res.status(statusCodes.OK).json({
-      success: true,
-      msg: 'Report updated successfully',
-      data: report
-    });
-
-  } catch (error) {
-    console.error('Error updating report:', error);
-    return res.status(statusCodes.SERVER_ERROR).json({
-      success: false,
-      msg: 'Failed to update report',
-      error: error.message
-    });
-  }
 });
 
 // Assign an officer to a report
@@ -1132,7 +1135,6 @@ exports.searchReports = asyncHandler(async (req, res) => {
     });
   }
 });
-
 
 // Reassign report to different police station
 exports.reassignPoliceStation = asyncHandler(async (req, res) => {

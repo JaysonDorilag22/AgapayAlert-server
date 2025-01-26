@@ -1,7 +1,7 @@
 const Notification = require('../models/notificationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
-const broadcastTypes = require('../utils/notificationTemplates');
+
 // Get user's notifications with pagination and filters
 exports.getUserNotifications = asyncHandler(async (req, res) => {
   try {

@@ -1,8 +1,11 @@
-const axios = require('axios');
-const { sendEmailNotification } = require('./notificationUtils');
-const dotenv = require('dotenv');
-const { broadcastTemplates } = require('./contentTemplates');
+const axios = require("axios");
+const { sendEmailNotification } = require("./notificationUtils");
+const dotenv = require("dotenv");
+const { broadcastTemplates } = require("./contentTemplates");
 dotenv.config();
+
+const ONESIGNAL_API_URL = "https://onesignal.com/api/v1/notifications";
+const FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v22.0";
 
 /**
  * Send a push notification.
@@ -17,16 +20,19 @@ const sendPushNotification = async (message, recipients) => {
   };
 
   try {
-    const response = await axios.post('https://onesignal.com/api/v1/notifications', notification, {
+    const response = await axios.post(ONESIGNAL_API_URL, notification, {
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${process.env.ONESIGNAL_API_KEY}`,
+        "Content-Type": "application/json",
+        Authorization: `Basic ${process.env.ONESIGNAL_API_KEY}`,
       },
     });
-    console.log('OneSignal response:', response.data);
+    return response.data;
   } catch (error) {
-    console.error('Error sending push notification:', error.response ? error.response.data : error.message);
-    throw new Error('Failed to send push notification');
+    console.error(
+      "Error sending push notification:",
+      error.response ? error.response.data : error.message
+    );
+    throw new Error("Failed to send push notification");
   }
 };
 
@@ -34,71 +40,69 @@ const sendPushNotification = async (message, recipients) => {
  * Create a Facebook post.
  * @param {Object} report - The report object.
  */
-// Create Facebook post
 const createFacebookPost = async (report) => {
-  try {
-    const content = broadcastTemplates.facebook(report);
-    
-    // Use newer Graph API endpoint for photos
-    const url = `https://graph.facebook.com/v22.0/${process.env.FACEBOOK_PAGE_ID}/photos`;
-    
-    const formData = {
-      caption: content.message,
-      url: content.image,
-      access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN
-    };
+  const url = `${FACEBOOK_GRAPH_API_URL}/${process.env.FACEBOOK_PAGE_ID}/photos`;
+  const content = broadcastTemplates.facebook(report);
+  const data = {
+    caption: content.message,
+    url: content.image,
+    access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
+  };
 
-    const response = await axios.post(url, formData, {
+  try {
+    const response = await axios.post(url, data, {
       headers: {
-        'Content-Type': 'application/json'
-      }
+        "Content-Type": "application/json",
+      },
     });
 
     return {
       success: true,
       postId: response.data.id,
-      data: response.data
+      data: response.data,
     };
-
   } catch (error) {
-    console.error('Facebook API Error:', {
+    console.error("Facebook API Error:", {
       message: error.response?.data?.error?.message,
       code: error.response?.data?.error?.code,
-      type: error.response?.data?.error?.type
+      type: error.response?.data?.error?.type,
     });
     return {
       success: false,
-      error: error.response?.data?.error?.message || error.message
+      error: error.response?.data?.error?.message || error.message,
     };
   }
 };
 
-// Remove duplicate sendPushNotification
-
-// Delete Facebook post
+/**
+ * Delete a Facebook post.
+ * @param {string} postId - The ID of the post to delete.
+ */
 const deleteFacebookPost = async (postId) => {
-  const url = `https://graph.facebook.com/${postId}`;
-  
+  const url = `${FACEBOOK_GRAPH_API_URL}/${postId}`;
+
   try {
     await axios.delete(url, {
       params: {
-        access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN
-      }
+        access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
+      },
     });
-    
+
     return {
       success: true,
-      msg: 'Facebook post deleted successfully'
+      msg: "Facebook post deleted successfully",
     };
   } catch (error) {
-    console.error('Error deleting Facebook post:', error.response?.data || error);
-    throw new Error('Failed to delete Facebook post');
+    console.error(
+      "Error deleting Facebook post:",
+      error.response?.data || error
+    );
+    throw new Error("Failed to delete Facebook post");
   }
 };
-
 
 module.exports = {
   sendPushNotification,
   createFacebookPost,
-  deleteFacebookPost
+  deleteFacebookPost,
 };

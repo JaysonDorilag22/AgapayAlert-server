@@ -325,8 +325,6 @@ exports.testAdminNotification = asyncHandler(async (req, res) => {
       headings: { 
         en: "Admin Test Alert" 
       },
-      ios_sound: "../constants/alert.wav", 
-      android_sound: "../constants/alert.wav",
       priority: 10
     };
 
@@ -351,6 +349,43 @@ exports.testAdminNotification = asyncHandler(async (req, res) => {
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       error: error.response?.data || error.message
+    });
+  }
+});
+
+// Add after testAdminNotification
+exports.testMessengerBroadcast = asyncHandler(async (req, res) => {
+  try {
+    // Messenger broadcast endpoint
+    const url = `https://graph.facebook.com/v21.0/${process.env.FACEBOOK_PAGE_ID}/messages`;
+    
+    const messageData = {
+      message: {
+        text: "🚨 Test Alert: This is a test broadcast message from AgapayAlert system."
+      },
+      messaging_type: "MESSAGE_TAG",
+      tag: "CONFIRMED_EVENT_UPDATE",
+      access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN
+    };
+
+    const response = await axios.post(url, messageData, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: response.data,
+      msg: 'Test message broadcast sent successfully'
+    });
+
+  } catch (error) {
+    console.error('Messenger broadcast error:', error.response?.data || error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: error.response?.data?.error?.message || error.message,
+      msg: 'Failed to send test broadcast'
     });
   }
 });

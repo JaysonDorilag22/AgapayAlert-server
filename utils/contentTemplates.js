@@ -20,7 +20,7 @@ const broadcastTemplates = {
   }),
 
   facebook: (report) => ({
-    message: `🚨 MISSING PERSON ALERT 🚨
+    message: `🚨 AGAPAYALERT 🚨
   
   PLEASE HELP US LOCATE:
   Name: ${report.personInvolved.firstName} ${report.personInvolved.lastName}
