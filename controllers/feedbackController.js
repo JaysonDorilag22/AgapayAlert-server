@@ -4,16 +4,29 @@ const statusCodes = require('../constants/statusCodes');
 
 // Create feedback
 exports.createFeedback = asyncHandler(async (req, res) => {
+    const { rating, category, comment } = req.body;
+
+    // Validate and ensure rating is a number
+    if (isNaN(rating) || rating < 1 || rating > 5) {
+        return res.status(400).json({
+            success: false,
+            message: "Rating must be a number between 1 and 5",
+        });
+    }
+
     const feedback = await Feedback.create({
-        ...req.body,
-        user: req.user.id
+        rating: parseFloat(rating), // Ensure numeric value
+        category,
+        comment,
+        user: req.user.id,
     });
 
     res.status(statusCodes.CREATED).json({
         success: true,
-        data: feedback
+        data: feedback,
     });
 });
+
 
 // Get all feedbacks
 exports.getFeedbacks = asyncHandler(async (req, res) => {
@@ -64,6 +77,36 @@ exports.getFeedback = asyncHandler(async (req, res) => {
     });
 });
 
+// Get logged-in user's feedbacks
+exports.getMyFeedback = asyncHandler(async (req, res) => {
+    const { page = 1, limit = 10, category } = req.query;
+    
+    // Build query
+    const query = { user: req.user.id };
+    if (category) {
+        query.category = category;
+    }
+    
+    const feedbacks = await Feedback.find(query)
+        .populate('reportId')
+        .populate('adminResponse.respondedBy', 'firstName lastName')
+        .sort('-createdAt')
+        .skip((page - 1) * limit)
+        .limit(Number(limit));
+
+    const total = await Feedback.countDocuments(query);
+
+    res.status(statusCodes.OK).json({
+        success: true,
+        data: {
+            feedbacks,
+            currentPage: Number(page),
+            totalPages: Math.ceil(total / limit),
+            total,
+            category: category || 'all'
+        }
+    });
+});
 // Update feedback
 exports.updateFeedback = asyncHandler(async (req, res) => {
     const feedback = await Feedback.findById(req.params.id);

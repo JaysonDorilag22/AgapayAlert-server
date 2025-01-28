@@ -19,7 +19,7 @@ const feedbackSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['App', 'Report', 'Police Response', 'Support', 'Other']
+    enum: ['App', 'Report', 'Police', 'Support', 'Other']
   },
   reportId: {
     type: mongoose.Schema.Types.ObjectId,
