@@ -272,6 +272,7 @@ exports.login = asyncHandler(async (req, res) => {
   }
 });
 
+
 // Logout and clear device token
 exports.logout = asyncHandler(async (req, res) => {
   try {

@@ -1,90 +1,89 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Your Verification Code</title>
-  </head>
-  <body
-    style="
-      margin: 0;
-      padding: 0;
-      font-family: Arial, sans-serif;
-      background-color: #f4f4f4;
-    "
-  >
-    <table
-      border="0"
-      cellpadding="0"
-      cellspacing="0"
-      width="100%"
-      style="max-width: 600px; margin: 0 auto; background-color: #ffffff"
-    >
-      <tr>
-        <td
-          align="center"
-          bgcolor="#3498db"
-          style="padding: 40px 0; color: #ffffff"
-        >
-          <h1 style="margin: 0">Your Verification Code</h1>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding: 40px 30px">
-          <p style="margin-bottom: 20px">Hello,</p>
-          <p style="margin-bottom: 20px">
-            Thank you for signing up! Please use the following verification code
-            to complete your registration:
-          </p>
-          <table
-            border="0"
-            cellpadding="0"
-            cellspacing="0"
-            width="100%"
-            style="margin-bottom: 20px"
-          >
-            <tr>
-              <td
-                align="center"
-                style="background-color: #f8f8f8; padding: 20px"
-              >
-                <span
-                  style="
-                    font-size: 32px;
-                    font-weight: bold;
-                    letter-spacing: 5px;
-                    color: #333333;
-                  "
-                  ><%= otp %></span
-                >
-              </td>
-            </tr>
-          </table>
-          <p style="margin-bottom: 20px">
-            Enter this code on our website or app to verify your email address
-            and activate your account.
-          </p>
-          <p style="margin-bottom: 20px">
-            This code will expire in 30 minutes for security reasons.
-          </p>
-          <p style="margin-bottom: 20px">
-            If you didn't request this code, please ignore this email.
-          </p>
-          <p style="margin-top: 20px">Best regards,<br />Your Company Team</p>
-        </td>
-      </tr>
-      <tr>
-        <td
-          align="center"
-          bgcolor="#f4f4f4"
-          style="padding: 20px 0; color: #888888; font-size: 12px"
-        >
-          <p style="margin: 0">
-            &copy; 2023 Your Company. All rights reserved.
-          </p>
-          <p style="margin: 5px 0 0">123 Main St, City, Country 12345</p>
-        </td>
-      </tr>
-    </table>
-  </body>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f4f4;
+            color: #333333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            background-color: #041562;
+            color: #ffffff;
+            padding: 30px 0;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .content {
+            padding: 40px 30px;
+        }
+        .verification-code {
+            background-color: #f8f8f8;
+            border: 2px solid #11468F;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .verification-code span {
+            font-size: 36px;
+            font-weight: bold;
+            letter-spacing: 5px;
+            color: #11468F;
+        }
+        .footer {
+            background-color: #f4f4f4;
+            color: #666666;
+            font-size: 12px;
+            padding: 20px 0;
+            text-align: center;
+        }
+        @media only screen and (max-width: 600px) {
+            .container {
+                width: 100%;
+                margin: 0;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Your Verification Code</h1>
+        </div>
+        <div class="content">
+            <p>Hello,</p>
+            <p>Thank you for signing up! Please use the following verification code to complete your registration:</p>
+            <div class="verification-code">
+                <span><%= otp %></span>
+            </div>
+            <p>Enter this code on our website or app to verify your email address and activate your account.</p>
+            <p>This code will expire in 30 minutes for security reasons.</p>
+            <p>If you didn't request this code, please ignore this email.</p>
+            <p>Best regards,<br>AgapayAlert</p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2025 AgapayAlert. All rights reserved.</p>
+        </div>
+    </div>
+</body>
 </html>

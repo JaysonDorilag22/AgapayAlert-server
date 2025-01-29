@@ -11,6 +11,7 @@ const cloudinary = require('cloudinary').v2;
 const { getCoordinatesFromAddress } = require('../utils/geocoding');
 const {sendOneSignalNotification} = require('../utils/notificationUtils');
 const { isLastSeenMoreThan24Hours } = require('../utils/isLastSeenMoreThan24Hours');
+const { getIO, SOCKET_EVENTS } = require('../utils/socketUtils');
 
 // Helper function to find police station
 const findPoliceStation = async (selectedId, coordinates) => {
@@ -156,6 +157,33 @@ exports.createReport = asyncHandler(async (req, res) => {
     });
 
     await report.save();
+
+    // Get populated report data for socket emission
+    const populatedReport = await Report.findById(report._id)
+      .populate('reporter', 'firstName lastName')
+      .populate('assignedPoliceStation', 'name address')
+      .select({
+        type: 1,
+        personInvolved: 1,
+        location: 1,
+        status: 1,
+        createdAt: 1
+      });
+
+    // Emit socket event for new report
+    const io = getIO();
+    
+    // Emit to police station room
+    io.to(`policeStation_${assignedStation._id}`).emit(SOCKET_EVENTS.NEW_REPORT, {
+      report: populatedReport,
+      message: `New ${type} report assigned to your station`
+    });
+
+    // Emit to city admin room if exists
+    io.to(`city_${location.address.city}`).emit(SOCKET_EVENTS.NEW_REPORT, {
+      report: populatedReport,
+      message: `New ${type} report in your city`
+    });
 
     // Handle notifications
     try {
@@ -1019,27 +1047,24 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
 // Search Reports
 exports.searchReports = asyncHandler(async (req, res) => {
   try {
+    console.log('Search params:', req.query);
+    
     const { 
-      query, 
+      query = '', 
       page = 1, 
       limit = 10,
       status,
-      type,
-      startDate,
-      endDate 
+      type
     } = req.query;
 
     const currentPage = parseInt(page);
     const limitPerPage = parseInt(limit);
-
-    // Base search conditions
     let searchQuery = {};
 
     // Role-based filtering
     switch (req.user.roles[0]) {
       case 'police_officer':
       case 'police_admin':
-        // Only see reports assigned to their police station
         if (!req.user.policeStation) {
           return res.status(statusCodes.BAD_REQUEST).json({
             success: false,
@@ -1050,7 +1075,6 @@ exports.searchReports = asyncHandler(async (req, res) => {
         break;
 
       case 'city_admin':
-        // Get all stations in the admin's city
         const cityStations = await PoliceStation.find({
           'address.city': req.user.address.city
         });
@@ -1060,7 +1084,7 @@ exports.searchReports = asyncHandler(async (req, res) => {
         break;
 
       case 'super_admin':
-        // Can see all reports
+        // Super admin can see all reports
         break;
 
       default:
@@ -1070,50 +1094,71 @@ exports.searchReports = asyncHandler(async (req, res) => {
         });
     }
 
-    // Add text search if query provided
-    if (query) {
+    // Text search
+    if (query.trim()) {
+      const searchTerms = query.trim().split(' ').filter(term => term.length > 0);
+      
       searchQuery.$or = [
+        // Name searches
         { 'personInvolved.firstName': { $regex: query, $options: 'i' } },
         { 'personInvolved.lastName': { $regex: query, $options: 'i' } },
         { 'personInvolved.alias': { $regex: query, $options: 'i' } },
+        // Location searches
         { 'location.address.barangay': { $regex: query, $options: 'i' } },
-        { 'location.address.city': { $regex: query, $options: 'i' } }
+        { 'location.address.city': { $regex: query, $options: 'i' } },
+        // Type search
+        { 'type': { $regex: query, $options: 'i' } }
       ];
+
+      if (searchTerms.length > 1) {
+        // Add full name searches
+        searchQuery.$or.push(
+          {
+            $and: [
+              { 'personInvolved.firstName': { $regex: searchTerms[0], $options: 'i' } },
+              { 'personInvolved.lastName': { $regex: searchTerms[1], $options: 'i' } }
+            ]
+          },
+          {
+            $and: [
+              { 'personInvolved.firstName': { $regex: searchTerms[1], $options: 'i' } },
+              { 'personInvolved.lastName': { $regex: searchTerms[0], $options: 'i' } }
+            ]
+          }
+        );
+      }
     }
 
-    // Add filters
-    if (status) searchQuery.status = status;
-    if (type) searchQuery.type = type;
-    if (startDate && endDate) {
-      searchQuery.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
+    // Status and type filters (case insensitive)
+    if (status) {
+      searchQuery.status = { $regex: new RegExp(status, 'i') };
     }
+    if (type) {
+      searchQuery.type = { $regex: new RegExp(type, 'i') };
+    }
+
+    console.log('Final search query:', JSON.stringify(searchQuery, null, 2));
 
     // Execute search with pagination
-    const reports = await Report.find(searchQuery)
-      .populate('reporter', 'firstName lastName number email')
-      .populate('assignedPoliceStation', 'name address')
-      .populate('assignedOfficer', 'firstName lastName number')
-      .select({
-        type: 1,
-        status: 1,
-        'personInvolved.firstName': 1,
-        'personInvolved.lastName': 1,
-        'personInvolved.alias': 1,
-        'personInvolved.age': 1,
-        'personInvolved.lastSeenDate': 1,
-        'personInvolved.lastSeentime': 1,
-        'personInvolved.mostRecentPhoto': 1,
-        'location.address': 1,
-        createdAt: 1
-      })
-      .sort('-createdAt')
-      .skip((currentPage - 1) * limitPerPage)
-      .limit(limitPerPage);
-
-    const total = await Report.countDocuments(searchQuery);
+    const [reports, total] = await Promise.all([
+      Report.find(searchQuery)
+        .populate('reporter', 'firstName lastName number email')
+        .populate('assignedPoliceStation', 'name address')
+        .populate('assignedOfficer', 'firstName lastName number')
+        .select({
+          type: 1,
+          status: 1,
+          personInvolved: 1,
+          'location.address': 1,
+          createdAt: 1,
+          updatedAt: 1,
+          broadcastConsent: 1
+        })
+        .sort('-createdAt')
+        .skip((currentPage - 1) * limitPerPage)
+        .limit(limitPerPage),
+      Report.countDocuments(searchQuery)
+    ]);
 
     res.status(statusCodes.OK).json({
       success: true,
@@ -1122,12 +1167,15 @@ exports.searchReports = asyncHandler(async (req, res) => {
         currentPage,
         totalPages: Math.ceil(total / limitPerPage),
         totalReports: total,
-        hasMore: currentPage * limitPerPage < total
+        hasMore: currentPage * limitPerPage < total,
+        query: query || null,
+        type: type || null,
+        status: status || null
       }
     });
 
   } catch (error) {
-    console.error('Error searching reports:', error);
+    console.error('Search error:', error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: 'Error searching reports',
