@@ -1,17 +1,19 @@
-const Report = require('../models/reportModel');
-const Notification = require('../models/notificationModel');
-const User = require('../models/userModel');
-const PoliceStation = require('../models/policeStationModel');
-const asyncHandler = require('express-async-handler');
-const statusCodes = require('../constants/statusCodes');
-const errorMessages = require('../constants/errorMessages');
-const uploadToCloudinary = require('../utils/uploadToCloudinary');
-const { notifyPoliceStation } = require('../utils/notificationUtils');
-const cloudinary = require('cloudinary').v2;
-const { getCoordinatesFromAddress } = require('../utils/geocoding');
-const {sendOneSignalNotification} = require('../utils/notificationUtils');
-const { isLastSeenMoreThan24Hours } = require('../utils/isLastSeenMoreThan24Hours');
-const { getIO, SOCKET_EVENTS } = require('../utils/socketUtils');
+const Report = require("../models/reportModel");
+const Notification = require("../models/notificationModel");
+const User = require("../models/userModel");
+const PoliceStation = require("../models/policeStationModel");
+const asyncHandler = require("express-async-handler");
+const statusCodes = require("../constants/statusCodes");
+const errorMessages = require("../constants/errorMessages");
+const uploadToCloudinary = require("../utils/uploadToCloudinary");
+const { notifyPoliceStation } = require("../utils/notificationUtils");
+const cloudinary = require("cloudinary").v2;
+const { getCoordinatesFromAddress } = require("../utils/geocoding");
+const { sendOneSignalNotification } = require("../utils/notificationUtils");
+const {
+  isLastSeenMoreThan24Hours,
+} = require("../utils/isLastSeenMoreThan24Hours");
+const { getIO, SOCKET_EVENTS } = require("../utils/socketUtils");
 
 // Helper function to find police station
 const findPoliceStation = async (selectedId, coordinates) => {
@@ -25,12 +27,12 @@ const findPoliceStation = async (selectedId, coordinates) => {
     location: {
       $near: {
         $geometry: {
-          type: 'Point',
-          coordinates
+          type: "Point",
+          coordinates,
         },
-        $maxDistance: 5000
-      }
-    }
+        $maxDistance: 5000,
+      },
+    },
   });
 
   // If no station within 5km, find absolute nearest
@@ -39,11 +41,11 @@ const findPoliceStation = async (selectedId, coordinates) => {
       location: {
         $near: {
           $geometry: {
-            type: 'Point',
-            coordinates
-          }
-        }
-      }
+            type: "Point",
+            coordinates,
+          },
+        },
+      },
     });
   }
 
@@ -53,37 +55,42 @@ const findPoliceStation = async (selectedId, coordinates) => {
 // Create a new report
 exports.createReport = asyncHandler(async (req, res) => {
   try {
-    const { 
-      type, 
-      personInvolved,
-      location,
-      selectedPoliceStation,
-    } = req.body;
+    let { type, personInvolved, location, selectedPoliceStation } = req.body;
 
-
-    // Check last seen time for Missing Person reports
-    if (type === 'Missing') {
+    // Automatically handle Missing/Absent classification
+    if (type === "Missing" || type === "Absent") {
       const timeCheck = isLastSeenMoreThan24Hours(
         personInvolved.lastSeenDate,
         personInvolved.lastSeentime
       );
 
-      if (!timeCheck.isMoreThan24Hours) {
-        return res.status(statusCodes.BAD_REQUEST).json({
-          success: false,
-          msg: `Person has been missing for only ${timeCheck.hoursPassed} hours. Cases less than 24 hours are classified as 'Absent Person' reports.`,
-          suggestedType: 'Absent'
-        });
-      }
+      // Automatically set type based on hours passed
+      type = timeCheck.isMoreThan24Hours ? "Missing" : "Absent";
+
+      // No need to throw error, just inform about the classification
+      const message = timeCheck.isMoreThan24Hours
+        ? `Case classified as 'Missing Person' since person has been missing for ${timeCheck.hoursPassed} hours.`
+        : `Case classified as 'Absent Person' since person has been missing for ${timeCheck.hoursPassed} hours.`;
+
+      console.log("Time check result:", {
+        timeCheck,
+        assignedType: type,
+        message,
+      });
     }
 
-    const broadcastConsent = req.body.broadcastConsent === 'true';
+    const broadcastConsent = req.body.broadcastConsent === "true";
 
     // Validate input
-    if (!type || !personInvolved || !location || typeof broadcastConsent !== 'boolean') {
+    if (
+      !type ||
+      !personInvolved ||
+      !location ||
+      typeof broadcastConsent !== "boolean"
+    ) {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
-        msg: 'Missing required fields or invalid broadcast consent'
+        msg: "Missing required fields or invalid broadcast consent",
       });
     }
 
@@ -92,40 +99,43 @@ exports.createReport = asyncHandler(async (req, res) => {
     if (!geoData.success) {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
-        msg: geoData.message
+        msg: geoData.message,
       });
     }
 
     // Handle photo upload
-    if (!req.files?.['personInvolved[mostRecentPhoto]']) {
+    if (!req.files?.["personInvolved[mostRecentPhoto]"]) {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
-        msg: 'Most recent photo is required'
+        msg: "Most recent photo is required",
       });
     }
 
-    const photoFile = req.files['personInvolved[mostRecentPhoto]'][0];
-    const photoResult = await uploadToCloudinary(photoFile.path, 'reports');
-    
+    const photoFile = req.files["personInvolved[mostRecentPhoto]"][0];
+    const photoResult = await uploadToCloudinary(photoFile.path, "reports");
+
     // Handle additional images
     let additionalImages = [];
     if (req.files?.additionalImages) {
-      const uploadPromises = req.files.additionalImages.map(file => 
-        uploadToCloudinary(file.path, 'reports')
+      const uploadPromises = req.files.additionalImages.map((file) =>
+        uploadToCloudinary(file.path, "reports")
       );
       const uploadResults = await Promise.all(uploadPromises);
-      additionalImages = uploadResults.map(result => ({
+      additionalImages = uploadResults.map((result) => ({
         url: result.url,
-        public_id: result.public_id
+        public_id: result.public_id,
       }));
     }
 
     // Find police station
-    let assignedStation = await findPoliceStation(selectedPoliceStation, geoData.coordinates);
+    let assignedStation = await findPoliceStation(
+      selectedPoliceStation,
+      geoData.coordinates
+    );
     if (!assignedStation) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: 'No police stations found in the system'
+        msg: "No police stations found in the system",
       });
     }
 
@@ -137,171 +147,201 @@ exports.createReport = asyncHandler(async (req, res) => {
         ...personInvolved,
         mostRecentPhoto: {
           url: photoResult.url,
-          public_id: photoResult.public_id
-        }
+          public_id: photoResult.public_id,
+        },
       },
       additionalImages,
       location: {
-        type: 'Point',
+        type: "Point",
         coordinates: geoData.coordinates,
-        address: location.address
+        address: location.address,
       },
       assignedPoliceStation: assignedStation._id,
       broadcastConsent: broadcastConsent,
-      consentUpdateHistory: [{
-        previousValue: false,
-        newValue: broadcastConsent,
-        updatedBy: req.user.id,
-        date: new Date()
-      }]
+      consentUpdateHistory: [
+        {
+          previousValue: false,
+          newValue: broadcastConsent,
+          updatedBy: req.user.id,
+          date: new Date(),
+        },
+      ],
     });
 
     await report.save();
 
     // Get populated report data for socket emission
     const populatedReport = await Report.findById(report._id)
-      .populate('reporter', 'firstName lastName')
-      .populate('assignedPoliceStation', 'name address')
+      .populate("reporter", "firstName lastName")
+      .populate("assignedPoliceStation", "name address")
       .select({
         type: 1,
         personInvolved: 1,
         location: 1,
         status: 1,
-        createdAt: 1
+        createdAt: 1,
       });
 
     // Emit socket event for new report
     const io = getIO();
-    
+
     // Emit to police station room
-    io.to(`policeStation_${assignedStation._id}`).emit(SOCKET_EVENTS.NEW_REPORT, {
-      report: populatedReport,
-      message: `New ${type} report assigned to your station`
-    });
+    io.to(`policeStation_${assignedStation._id}`).emit(
+      SOCKET_EVENTS.NEW_REPORT,
+      {
+        report: populatedReport,
+        message: `New ${type} report assigned to your station`,
+      }
+    );
 
     // Emit to city admin room if exists
     io.to(`city_${location.address.city}`).emit(SOCKET_EVENTS.NEW_REPORT, {
       report: populatedReport,
-      message: `New ${type} report in your city`
+      message: `New ${type} report in your city`,
     });
 
     // Handle notifications
     try {
       await notifyPoliceStation(report, assignedStation);
-      
+
       // Notify reporter
       await Notification.create({
         recipient: req.user.id,
-        type: 'REPORT_CREATED',
-        title: 'Report Created',
+        type: "REPORT_CREATED",
+        title: "Report Created",
         message: `Your ${type} report has been created and assigned to ${assignedStation.name}`,
         data: {
-          reportId: report._id
-        }
+          reportId: report._id,
+        },
       });
     } catch (notificationError) {
-      console.error('Notification failed:', notificationError);
+      console.error("Notification failed:", notificationError);
     }
 
     res.status(statusCodes.CREATED).json({
       success: true,
-      msg: 'Report created successfully',
+      msg: "Report created successfully",
       data: {
         report,
         assignedStation,
-        assignmentType: selectedPoliceStation ? 'Manual Selection' : 'Automatic Assignment'
-      }
+        assignmentType: selectedPoliceStation
+          ? "Manual Selection"
+          : "Automatic Assignment",
+      },
     });
-
   } catch (error) {
-    console.error('Error in createReport:', error);
+    console.error("Error in createReport:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error creating report',
-      error: error.message
+      msg: "Error creating report",
+      error: error.message,
     });
   }
 });
 
-// Update a report when it's still pending 
+// Update a report when it's still pending
 exports.updateReport = asyncHandler(async (req, res) => {
+  // Debug logging for received data
+  console.log('Update Report - Received Data:', {
+    params: req.params,
+    body: req.body,
+    files: req.files || 'No files uploaded',
+    user: {
+      id: req.user.id,
+      roles: req.user.roles
+    }
+  });
+
   const { reportId } = req.params;
-  const { status, followUp, removeImages } = req.body;
+  const { status, followUp, removeImages, personInvolved } = req.body;
   const userId = req.user.id;
 
   const report = await Report.findById(reportId)
-    .populate('reporter', 'deviceToken');
-  
+    .populate('reporter', 'deviceToken firstName lastName')
+    .populate('assignedPoliceStation', 'name');
+
   if (!report) {
     return res.status(statusCodes.NOT_FOUND).json({
       success: false,
-      msg: errorMessages.REPORT_NOT_FOUND
+      msg: errorMessages.REPORT_NOT_FOUND,
     });
   }
 
   // Check if user is reporter or police officer
   const isReporter = report.reporter._id.toString() === userId;
-  const isOfficer = req.user.roles.includes('police');
+  const isOfficer = req.user.roles.includes("police");
 
   if (!isReporter && !isOfficer) {
     return res.status(statusCodes.FORBIDDEN).json({
       success: false,
-      msg: 'Not authorized to update this report'
+      msg: "Not authorized to update this report",
+    });
+  }
+
+  // Update personInvolved fields if provided and user is allowed
+  if (personInvolved && (report.status === "Pending" || isOfficer)) {
+    Object.keys(personInvolved).forEach(field => {
+      if (field !== 'mostRecentPhoto') {
+        report.personInvolved[field] = personInvolved[field];
+      }
     });
   }
 
   // Handle image updates only if pending or police officer
-  if ((report.status === 'Pending' || isOfficer) && req.files) {
+  if ((report.status === "Pending" || isOfficer) && req.files) {
     try {
       // Update main photo if provided
-      if (req.files['personInvolved[mostRecentPhoto]']) {
-        // Delete old photo from Cloudinary
+      if (req.files["personInvolved[mostRecentPhoto]"]) {
         if (report.personInvolved.mostRecentPhoto?.public_id) {
-          await cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id);
+          await cloudinary.uploader.destroy(
+            report.personInvolved.mostRecentPhoto.public_id
+          );
         }
 
-        const photoFile = req.files['personInvolved[mostRecentPhoto]'][0];
-        const photoResult = await uploadToCloudinary(photoFile.path, 'reports');
-        
+        const photoFile = req.files["personInvolved[mostRecentPhoto]"][0];
+        const photoResult = await uploadToCloudinary(photoFile.path, "reports");
+
         report.personInvolved.mostRecentPhoto = {
           url: photoResult.url,
-          public_id: photoResult.public_id
+          public_id: photoResult.public_id,
         };
       }
 
       // Handle additional images
       if (req.files.additionalImages) {
-        const uploadPromises = req.files.additionalImages.map(file => 
-          uploadToCloudinary(file.path, 'reports')
+        const uploadPromises = req.files.additionalImages.map((file) =>
+          uploadToCloudinary(file.path, "reports")
         );
-        
+
         const uploadResults = await Promise.all(uploadPromises);
-        const newImages = uploadResults.map(result => ({
+        const newImages = uploadResults.map((result) => ({
           url: result.url,
           public_id: result.public_id,
           uploadedBy: userId,
-          uploadedAt: new Date()
+          uploadedAt: new Date(),
         }));
-        
+
         report.additionalImages.push(...newImages);
       }
     } catch (uploadError) {
-      console.error('Image upload failed:', uploadError);
+      console.error("Image upload failed:", uploadError);
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
-        msg: 'Failed to upload images'
+        msg: "Failed to upload images",
       });
     }
   }
 
   // Remove images if requested and allowed
-  if (removeImages && (report.status === 'Pending' || isOfficer)) {
-    const imagesToRemove = Array.isArray(removeImages) ? removeImages : [removeImages];
+  if (removeImages && (report.status === "Pending" || isOfficer)) {
+    const imagesToRemove = Array.isArray(removeImages)
+      ? removeImages
+      : [removeImages];
     for (const imageId of imagesToRemove) {
-      const imageIndex = report.additionalImages.findIndex(img => 
-        img.public_id === imageId || img._id.toString() === imageId
+      const imageIndex = report.additionalImages.findIndex(
+        (img) => img.public_id === imageId || img._id.toString() === imageId
       );
-      
+
       if (imageIndex !== -1) {
         const image = report.additionalImages[imageIndex];
         await cloudinary.uploader.destroy(image.public_id);
@@ -312,11 +352,17 @@ exports.updateReport = asyncHandler(async (req, res) => {
 
   // Handle status updates (police only)
   if (status && isOfficer) {
-    const validStatuses = ['Pending', 'Assigned', 'Under Investigation', 'Resolved', 'Archived'];
+    const validStatuses = [
+      "Pending",
+      "Assigned",
+      "Under Investigation",
+      "Resolved",
+      "Archived",
+    ];
     if (!validStatuses.includes(status)) {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
-        msg: 'Invalid status value'
+        msg: "Invalid status value",
       });
     }
 
@@ -324,7 +370,7 @@ exports.updateReport = asyncHandler(async (req, res) => {
       previousStatus: report.status,
       newStatus: status,
       updatedBy: userId,
-      updatedAt: new Date()
+      updatedAt: new Date(),
     });
     report.status = status;
   }
@@ -333,42 +379,78 @@ exports.updateReport = asyncHandler(async (req, res) => {
   if (followUp) {
     report.followUp.push({
       note: followUp,
-      date: new Date()
+      date: new Date(),
     });
   }
 
   try {
     await report.save();
 
+    // Get populated report for response
+    const updatedReport = await Report.findById(report._id)
+      .populate('reporter', 'firstName lastName number email')
+      .populate('assignedPoliceStation', 'name address contactNumber')
+      .populate('assignedOfficer', 'firstName lastName number')
+      .select({
+        type: 1,
+        status: 1,
+        personInvolved: 1,
+        location: 1,
+        followUp: 1,
+        broadcastConsent: 1,
+        additionalImages: 1,
+        createdAt: 1,
+        updatedAt: 1
+      });
+
+    // Emit socket event for real-time update
+    const io = getIO();
+    
+    // Emit to police station room
+    if (report.assignedPoliceStation) {
+      io.to(`policeStation_${report.assignedPoliceStation}`).emit(
+        SOCKET_EVENTS.REPORT_UPDATED,
+        {
+          report: updatedReport,
+          message: `Report ${report._id} has been updated`
+        }
+      );
+    }
+
+    // Emit to reporter
+    io.to(`user_${report.reporter._id}`).emit(SOCKET_EVENTS.REPORT_UPDATED, {
+      report: updatedReport,
+      message: 'Your report has been updated'
+    });
+
     // Create notification for reporter if updated by officer
     if (isOfficer && !isReporter) {
       await Notification.create({
         recipient: report.reporter._id,
-        type: status ? 'STATUS_UPDATED' : 'REPORT_UPDATED',
-        title: status ? 'Report Status Updated' : 'Report Updated',
-        message: status 
+        type: status ? "STATUS_UPDATED" : "REPORT_UPDATED",
+        title: status ? "Report Status Updated" : "Report Updated",
+        message: status
           ? `Your report status has been updated to ${status}`
-          : 'Your report has been updated with new information',
+          : "Your report has been updated with new information",
         data: {
           reportId: report._id,
           status: status || report.status,
-          updatedBy: userId
-        }
+          updatedBy: userId,
+        },
       });
     }
 
     res.status(statusCodes.OK).json({
       success: true,
-      msg: 'Report updated successfully',
-      data: report
+      msg: "Report updated successfully",
+      data: updatedReport
     });
-
   } catch (error) {
-    console.error('Error updating report:', error);
+    console.error("Error updating report:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Failed to update report',
-      error: error.message
+      msg: "Failed to update report",
+      error: error.message,
     });
   }
 });
@@ -377,78 +459,118 @@ exports.updateReport = asyncHandler(async (req, res) => {
 exports.updateUserReport = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
-    const { status } = req.body;
+    const { status, followUp } = req.body;
     const userId = req.user.id;
 
-    if (!status) {
+    if (!status && !followUp) {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
-        msg: 'Status is required'
+        msg: "Status or follow-up note is required",
       });
     }
 
     const report = await Report.findById(reportId)
-      .populate('reporter', 'deviceToken')
-      .populate('assignedPoliceStation', '_id name')
-      .populate('assignedOfficer', '_id firstName lastName');
+      .populate("reporter", "deviceToken")
+      .populate("assignedPoliceStation", "_id name")
+      .populate("assignedOfficer", "_id firstName lastName");
 
     if (!report) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: 'Report not found'
+        msg: "Report not found",
       });
+    }
+
+    // Initialize followUp array if it doesn't exist
+    if (!report.followUp) {
+      report.followUp = [];
     }
 
     // Validate status change
-    const validStatuses = ['Pending', 'Assigned', 'Under Investigation', 'Resolved', 'Archived'];
-    if (!validStatuses.includes(status)) {
-      return res.status(statusCodes.BAD_REQUEST).json({
-        success: false,
-        msg: 'Invalid status value'
+    if (status) {
+      const validStatuses = [
+        "Pending",
+        "Assigned",
+        "Under Investigation",
+        "Resolved",
+        "Archived",
+      ];
+      if (!validStatuses.includes(status)) {
+        return res.status(statusCodes.BAD_REQUEST).json({
+          success: false,
+          msg: "Invalid status value",
+        });
+      }
+
+      // Update status
+      report.statusHistory = report.statusHistory || []; // Initialize if not exists
+      report.statusHistory.push({
+        previousStatus: report.status,
+        newStatus: status,
+        updatedBy: userId,
+        updatedAt: new Date(),
+      });
+      report.status = status;
+    }
+
+    // Add follow-up if provided
+    if (followUp) {
+      report.followUp.push({
+        note: followUp,
+        updatedBy: userId,
+        updatedAt: new Date()
       });
     }
 
-    // Update status
-    report.status = status;
-    report.statusHistory.push({
-      previousStatus: report.status,
-      newStatus: status,
-      updatedBy: userId,
-      updatedAt: new Date()
-    });
-
     await report.save();
+
+    // Get updated report with populated fields
+    const updatedReport = await Report.findById(reportId)
+      .populate("reporter", "deviceToken firstName lastName")
+      .populate("assignedPoliceStation", "name")
+      .populate("assignedOfficer", "firstName lastName")
+      .select({
+        status: 1,
+        followUp: 1,
+        statusHistory: 1,
+        updatedAt: 1
+      });
 
     // Handle notifications
     if (report.reporter?.deviceToken) {
       await sendOneSignalNotification({
         include_player_ids: [report.reporter.deviceToken],
-        title: 'Report Status Update',
-        message: `Your report status has been updated to: ${status}`,
+        title: status ? "Report Status Update" : "Follow-up Added",
+        message: status 
+          ? `Your report status has been updated to: ${status}`
+          : "A new follow-up note has been added to your report",
         data: {
-          type: 'STATUS_UPDATED',
+          type: status ? "STATUS_UPDATED" : "FOLLOWUP_ADDED",
           reportId: report._id.toString(),
-          status
-        }
+          status: status || report.status,
+        },
       });
     }
 
+    // Emit socket event
+    const io = getIO();
+    io.to(`user_${report.reporter._id}`).emit(SOCKET_EVENTS.REPORT_UPDATED, {
+      report: updatedReport,
+      message: status ? 'Status updated' : 'Follow-up added'
+    });
+
     return res.status(statusCodes.OK).json({
       success: true,
-      msg: 'Report status updated successfully',
-      data: {
-        reportId: report._id,
-        status: report.status,
-        updatedAt: new Date()
-      }
+      msg: status ? "Report status updated successfully" : "Follow-up added successfully",
+      data: updatedReport
     });
 
   } catch (error) {
-    console.error('Error updating report status:', error);
-    return res.status(statusCodes.SERVER_ERROR).json({
+    console.error("Error updating report:", error);
+    return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Failed to update report status',
-      error: error.message
+      msg: "Failed to update report",
+      error: error.message,
     });
   }
 });
@@ -456,41 +578,48 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
 // Get Reports (with filters)
 exports.getReports = asyncHandler(async (req, res) => {
   try {
-    const { status, type, startDate, endDate, page = 1, limit = 10 } = req.query;
+    const {
+      status,
+      type,
+      startDate,
+      endDate,
+      page = 1,
+      limit = 10,
+    } = req.query;
     let query = {};
 
     // Role-based filtering
     switch (req.user.roles[0]) {
-      case 'police_officer':
-      case 'police_admin':
+      case "police_officer":
+      case "police_admin":
         // Only see reports assigned to their police station
         if (!req.user.policeStation) {
           return res.status(statusCodes.BAD_REQUEST).json({
             success: false,
-            msg: 'Officer/Admin must be assigned to a police station'
+            msg: "Officer/Admin must be assigned to a police station",
           });
         }
         query.assignedPoliceStation = req.user.policeStation;
         break;
 
-      case 'city_admin':
+      case "city_admin":
         // Get all stations in the admin's city
         const cityStations = await PoliceStation.find({
-          'address.city': req.user.address.city
+          "address.city": req.user.address.city,
         });
         query.assignedPoliceStation = {
-          $in: cityStations.map(station => station._id)
+          $in: cityStations.map((station) => station._id),
         };
         break;
 
-      case 'super_admin':
+      case "super_admin":
         // Can see all reports
         break;
 
       default:
         return res.status(statusCodes.FORBIDDEN).json({
           success: false,
-          msg: 'Not authorized to view reports'
+          msg: "Not authorized to view reports",
         });
     }
 
@@ -500,16 +629,16 @@ exports.getReports = asyncHandler(async (req, res) => {
     if (startDate && endDate) {
       query.createdAt = {
         $gte: new Date(startDate),
-        $lte: new Date(endDate)
+        $lte: new Date(endDate),
       };
     }
 
     // Get paginated reports
     const reports = await Report.find(query)
-      .populate('reporter', '-password')
-      .populate('assignedPoliceStation')
-      .populate('assignedOfficer', 'firstName lastName number email')
-      .sort('-createdAt')
+      .populate("reporter", "-password")
+      .populate("assignedPoliceStation")
+      .populate("assignedOfficer", "firstName lastName number email")
+      .sort("-createdAt")
       .skip((page - 1) * limit)
       .limit(limit);
 
@@ -522,16 +651,15 @@ exports.getReports = asyncHandler(async (req, res) => {
         currentPage: page,
         totalPages: Math.ceil(total / limit),
         totalReports: total,
-        hasMore: page * limit < total
-      }
+        hasMore: page * limit < total,
+      },
     });
-
   } catch (error) {
-    console.error('Error getting reports:', error);
+    console.error("Error getting reports:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error retrieving reports',
-      error: error.message
+      msg: "Error retrieving reports",
+      error: error.message,
     });
   }
 });
@@ -539,18 +667,18 @@ exports.getReports = asyncHandler(async (req, res) => {
 // Delete Report
 exports.deleteReport = asyncHandler(async (req, res) => {
   const { reportId } = req.params;
-  const isAdmin = req.user.roles.includes('admin');
+  const isAdmin = req.user.roles.includes("admin");
 
   if (!isAdmin) {
     return res.status(statusCodes.FORBIDDEN).json({
-      msg: 'Only administrators can delete reports'
+      msg: "Only administrators can delete reports",
     });
   }
 
   const report = await Report.findById(reportId);
   if (!report) {
     return res.status(statusCodes.NOT_FOUND).json({
-      msg: errorMessages.REPORT_NOT_FOUND
+      msg: errorMessages.REPORT_NOT_FOUND,
     });
   }
 
@@ -561,23 +689,25 @@ exports.deleteReport = asyncHandler(async (req, res) => {
     }
   }
   if (report.personInvolved?.mostRecentPhoto?.public_id) {
-    await cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id);
+    await cloudinary.uploader.destroy(
+      report.personInvolved.mostRecentPhoto.public_id
+    );
   }
 
   await report.deleteOne();
   res.status(statusCodes.OK).json({
-    msg: 'Report deleted successfully'
+    msg: "Report deleted successfully",
   });
 });
 
 // Assign a police station to a report
 exports.assignPoliceStation = asyncHandler(async (req, res) => {
   const { reportId, policeStationId } = req.body;
-  const isOfficer = req.user.roles.includes('police');
+  const isOfficer = req.user.roles.includes("police");
 
   if (!isOfficer) {
     return res.status(statusCodes.FORBIDDEN).json({
-      msg: 'Only police officers can assign police stations'
+      msg: "Only police officers can assign police stations",
     });
   }
 
@@ -585,25 +715,25 @@ exports.assignPoliceStation = asyncHandler(async (req, res) => {
   const policeStation = await PoliceStation.findById(policeStationId);
 
   if (!report) {
-    return res.status(statusCodes.NOT_FOUND).json({ 
-      msg: errorMessages.REPORT_NOT_FOUND 
+    return res.status(statusCodes.NOT_FOUND).json({
+      msg: errorMessages.REPORT_NOT_FOUND,
     });
   }
 
   if (!policeStation) {
-    return res.status(statusCodes.NOT_FOUND).json({ 
-      msg: errorMessages.POLICE_STATION_NOT_FOUND 
+    return res.status(statusCodes.NOT_FOUND).json({
+      msg: errorMessages.POLICE_STATION_NOT_FOUND,
     });
   }
 
-  if (report.status !== 'Pending') {
+  if (report.status !== "Pending") {
     return res.status(statusCodes.BAD_REQUEST).json({
-      msg: 'Can only assign police station to pending reports'
+      msg: "Can only assign police station to pending reports",
     });
   }
 
   report.assignedPoliceStation = policeStation._id;
-  report.status = 'Assigned';
+  report.status = "Assigned";
   await report.save();
 
   await notifyPoliceStation(report, policeStation);
@@ -614,42 +744,42 @@ exports.assignPoliceStation = asyncHandler(async (req, res) => {
 // Assign an officer to a report
 exports.assignOfficer = asyncHandler(async (req, res) => {
   const { reportId, officerId } = req.body;
-  const isPoliceAdmin = req.user.roles.includes('police_admin');
+  const isPoliceAdmin = req.user.roles.includes("police_admin");
 
   if (!isPoliceAdmin) {
     return res.status(statusCodes.FORBIDDEN).json({
-      msg: 'Only police admins can assign officers to reports'
+      msg: "Only police admins can assign officers to reports",
     });
   }
 
   // Get report with populated fields
   const report = await Report.findById(reportId)
-    .populate('assignedPoliceStation')
-    .populate('reporter')
-    .populate('personInvolved');
+    .populate("assignedPoliceStation")
+    .populate("reporter")
+    .populate("personInvolved");
 
   if (!report) {
-    return res.status(statusCodes.NOT_FOUND).json({ 
-      msg: errorMessages.REPORT_NOT_FOUND 
+    return res.status(statusCodes.NOT_FOUND).json({
+      msg: errorMessages.REPORT_NOT_FOUND,
     });
   }
 
   // Get officer details
-  const officer = await User.findOne({ 
+  const officer = await User.findOne({
     _id: officerId,
-    roles: 'police_officer',
-    policeStation: report.assignedPoliceStation._id
+    roles: "police_officer",
+    policeStation: report.assignedPoliceStation._id,
   });
 
   if (!officer) {
     return res.status(statusCodes.NOT_FOUND).json({
-      msg: 'Officer not found or does not belong to the assigned police station'
+      msg: "Officer not found or does not belong to the assigned police station",
     });
   }
 
   // Update report
   report.assignedOfficer = officer._id;
-  report.status = 'Assigned';
+  report.status = "Assigned";
   await report.save();
 
   // Prepare notification data
@@ -660,8 +790,8 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
     // In-app notification
     Notification.create({
       recipient: officer._id,
-      type: 'ASSIGNED_OFFICER',
-      title: 'New Case Assignment',
+      type: "ASSIGNED_OFFICER",
+      title: "New Case Assignment",
       message: `You have been assigned to a ${report.type} case for ${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
       data: {
         reportId: report._id,
@@ -671,10 +801,10 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
           status: report.status,
           personInvolved: {
             name: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
-            age: report.personInvolved.age
-          }
-        }
-      }
+            age: report.personInvolved.age,
+          },
+        },
+      },
     })
   );
 
@@ -683,13 +813,13 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
     notificationPromises.push(
       sendOneSignalNotification({
         include_player_ids: [officer.deviceToken],
-        headings: { en: 'New Case Assignment' },
+        headings: { en: "New Case Assignment" },
         contents: { en: `You have been assigned to a ${report.type} case` },
         data: {
-          type: 'ASSIGNED_OFFICER',
+          type: "ASSIGNED_OFFICER",
           reportId: report._id,
-          caseType: report.type
-        }
+          caseType: report.type,
+        },
       })
     );
   }
@@ -700,17 +830,17 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
     notificationPromises.push(
       Notification.create({
         recipient: report.reporter._id,
-        type: 'STATUS_UPDATED',
-        title: 'Report Update',
+        type: "STATUS_UPDATED",
+        title: "Report Update",
         message: `Your report has been assigned to an investigating officer`,
         data: {
           reportId: report._id,
           status: report.status,
           assignedOfficer: {
             name: `${officer.firstName} ${officer.lastName}`,
-            badge: officer.badgeNumber
-          }
-        }
+            badge: officer.badgeNumber,
+          },
+        },
       })
     );
 
@@ -719,13 +849,15 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
       notificationPromises.push(
         sendOneSignalNotification({
           include_player_ids: [report.reporter.deviceToken],
-          headings: { en: 'Report Update' },
-          contents: { en: 'Your report has been assigned to an investigating officer' },
+          headings: { en: "Report Update" },
+          contents: {
+            en: "Your report has been assigned to an investigating officer",
+          },
           data: {
-            type: 'STATUS_UPDATED',
+            type: "STATUS_UPDATED",
             reportId: report._id,
-            status: report.status
-          }
+            status: report.status,
+          },
         })
       );
     }
@@ -735,20 +867,20 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
   try {
     await Promise.allSettled(notificationPromises);
   } catch (error) {
-    console.error('Notification error:', error);
+    console.error("Notification error:", error);
   }
 
   res.status(statusCodes.OK).json({
     success: true,
-    msg: 'Officer assigned successfully',
+    msg: "Officer assigned successfully",
     data: {
       report,
       assignedOfficer: {
         id: officer._id,
         name: `${officer.firstName} ${officer.lastName}`,
-        badge: officer.badgeNumber
-      }
-    }
+        badge: officer.badgeNumber,
+      },
+    },
   });
 });
 
@@ -759,54 +891,57 @@ exports.getPublicFeed = asyncHandler(async (req, res) => {
     const limitPerPage = parseInt(limit);
 
     // Base query for public reports
-    let query = { 
+    let query = {
       broadcastConsent: true,
       isPublished: true,
-      status: { $ne: 'Resolved' }
+      status: { $ne: "Resolved" },
     };
 
     // Add city filter if provided
     if (city) {
-      query['location.address.city'] = city;
+      query["location.address.city"] = city;
     }
 
     // Add type filter if provided and valid
-    if (type && ["Missing", "Abducted", "Kidnapped", "Hit-and-Run"].includes(type)) {
+    if (
+      type &&
+      ["Missing", "Abducted", "Kidnapped", "Hit-and-Run"].includes(type)
+    ) {
       query.type = type;
     }
 
     const reports = await Report.find(query)
       .select({
         type: 1,
-        'personInvolved.firstName': 1,
-        'personInvolved.lastName': 1,
-        'personInvolved.age': 1,
-        'personInvolved.lastSeenDate': 1,
-        'personInvolved.lastSeentime': 1,
-        'personInvolved.lastKnownLocation': 1,
-        'personInvolved.mostRecentPhoto': 1,
-        'location.address.city': 1,
-        createdAt: 1
+        "personInvolved.firstName": 1,
+        "personInvolved.lastName": 1,
+        "personInvolved.age": 1,
+        "personInvolved.lastSeenDate": 1,
+        "personInvolved.lastSeentime": 1,
+        "personInvolved.lastKnownLocation": 1,
+        "personInvolved.mostRecentPhoto": 1,
+        "location.address.city": 1,
+        createdAt: 1,
       })
-      .sort('-createdAt')
+      .sort("-createdAt")
       .skip((currentPage - 1) * limitPerPage)
       .limit(limitPerPage);
 
     const total = await Report.countDocuments(query);
 
-    const feedReports = reports.map(report => ({
+    const feedReports = reports.map((report) => ({
       id: report._id,
       type: report.type,
       personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
       age: report.personInvolved.age,
       lastSeen: {
         date: report.personInvolved.lastSeenDate,
-        time: report.personInvolved.lastSeentime
+        time: report.personInvolved.lastSeentime,
       },
       lastKnownLocation: report.personInvolved.lastKnownLocation,
       city: report.location.address.city,
       photo: report.personInvolved.mostRecentPhoto.url,
-      reportedAt: report.createdAt
+      reportedAt: report.createdAt,
     }));
 
     res.status(statusCodes.OK).json({
@@ -816,16 +951,15 @@ exports.getPublicFeed = asyncHandler(async (req, res) => {
         currentPage,
         totalPages: Math.ceil(total / limitPerPage),
         totalReports: total,
-        hasMore: currentPage * limitPerPage < total
-      }
+        hasMore: currentPage * limitPerPage < total,
+      },
     });
-
   } catch (error) {
-    console.error('Error getting public feed:', error);
+    console.error("Error getting public feed:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error retrieving public feed',
-      error: error.message
+      msg: "Error retrieving public feed",
+      error: error.message,
     });
   }
 });
@@ -833,28 +967,28 @@ exports.getPublicFeed = asyncHandler(async (req, res) => {
 // Get distinct cities with active reports that have broadcast consent
 exports.getReportCities = asyncHandler(async (req, res) => {
   try {
-    const cities = await Report.distinct('location.address.city', {
+    const cities = await Report.distinct("location.address.city", {
       broadcastConsent: true,
-      status: { $ne: 'Resolved' }
+      status: { $ne: "Resolved" },
     });
 
     const sortedCities = cities
-      .filter(city => city)
+      .filter((city) => city)
       .sort((a, b) => a.localeCompare(b));
 
     res.status(statusCodes.OK).json({
       success: true,
       data: {
         cities: sortedCities,
-        total: sortedCities.length
-      }
+        total: sortedCities.length,
+      },
     });
   } catch (error) {
-    console.error('Error fetching report cities:', error);
+    console.error("Error fetching report cities:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error retrieving cities',
-      error: error.message
+      msg: "Error retrieving cities",
+      error: error.message,
     });
   }
 });
@@ -876,18 +1010,18 @@ exports.getUserReports = asyncHandler(async (req, res) => {
     const reports = await Report.find(query)
       .select({
         type: 1,
-        'personInvolved.firstName': 1,
-        'personInvolved.lastName': 1,
-        'personInvolved.age': 1,
-        'personInvolved.lastSeenDate': 1,
-        'personInvolved.mostRecentPhoto': 1,
-        'location.address': 1,
+        "personInvolved.firstName": 1,
+        "personInvolved.lastName": 1,
+        "personInvolved.age": 1,
+        "personInvolved.lastSeenDate": 1,
+        "personInvolved.mostRecentPhoto": 1,
+        "location.address": 1,
         status: 1,
         broadcastConsent: 1,
-        createdAt: 1
+        createdAt: 1,
       })
-      .populate('assignedPoliceStation', 'name address')
-      .sort('-createdAt')
+      .populate("assignedPoliceStation", "name address")
+      .sort("-createdAt")
       .skip((currentPage - 1) * limitPerPage)
       .limit(limitPerPage);
 
@@ -900,16 +1034,15 @@ exports.getUserReports = asyncHandler(async (req, res) => {
         currentPage,
         totalPages: Math.ceil(total / limitPerPage),
         totalReports: total,
-        hasMore: currentPage * limitPerPage < total
-      }
+        hasMore: currentPage * limitPerPage < total,
+      },
     });
-
   } catch (error) {
-    console.error('Error getting user reports:', error);
+    console.error("Error getting user reports:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error retrieving user reports',
-      error: error.message
+      msg: "Error retrieving user reports",
+      error: error.message,
     });
   }
 });
@@ -924,122 +1057,139 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
     let report;
 
     // Case 1: Admin/Officer Access - Full Details
-    if (userRoles.some(role => ['police_officer', 'police_admin', 'city_admin', 'super_admin'].includes(role))) {
+    if (
+      userRoles.some((role) =>
+        [
+          "police_officer",
+          "police_admin",
+          "city_admin",
+          "super_admin",
+        ].includes(role)
+      )
+    ) {
       let query = { _id: reportId };
-      
-      if (userRoles.includes('police_officer') || userRoles.includes('police_admin')) {
+
+      if (
+        userRoles.includes("police_officer") ||
+        userRoles.includes("police_admin")
+      ) {
         query.assignedPoliceStation = req.user.policeStation;
-      } else if (userRoles.includes('city_admin')) {
+      } else if (userRoles.includes("city_admin")) {
         const cityStations = await PoliceStation.find({
-          'address.city': req.user.address.city
+          "address.city": req.user.address.city,
         });
-        query.assignedPoliceStation = { $in: cityStations.map(station => station._id) };
+        query.assignedPoliceStation = {
+          $in: cityStations.map((station) => station._id),
+        };
       }
 
       // Full details for officers/admins
       report = await Report.findOne(query)
-  .populate('reporter', 'firstName lastName number email address')
-  .populate('assignedPoliceStation')
-  .populate('assignedOfficer')
-  .populate('broadcastHistory.publishedBy', 'firstName lastName roles')
-  .populate('consentUpdateHistory.updatedBy', 'firstName lastName')
-  .select({
-    type: 1,
-    personInvolved: 1,
-    additionalImages: 1,
-    location: 1,
-    status: 1,
-    followUp: 1,
-    broadcastConsent: 1,
-    isPublished: 1,
-    consentUpdateHistory: 1,
-    broadcastHistory: 1,
-    publishSchedule: 1,
-    createdAt: 1,
-    updatedAt: 1,
-    reporter: 1,
-    assignedPoliceStation: 1,
-    assignedOfficer: 1
-  });
+        .populate("reporter", "firstName lastName number email address")
+        .populate("assignedPoliceStation")
+        .populate("assignedOfficer")
+        .populate("broadcastHistory.publishedBy", "firstName lastName roles")
+        .populate("consentUpdateHistory.updatedBy", "firstName lastName")
+        .select({
+          type: 1,
+          personInvolved: 1,
+          additionalImages: 1,
+          location: 1,
+          status: 1,
+          followUp: 1,
+          broadcastConsent: 1,
+          isPublished: 1,
+          consentUpdateHistory: 1,
+          broadcastHistory: 1,
+          publishSchedule: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          reporter: 1,
+          assignedPoliceStation: 1,
+          assignedOfficer: 1,
+        });
 
-    // Case 2: Report Owner Access - Limited Details
+      // Case 2: Report Owner Access - Limited Details
     } else if (userId) {
       report = await Report.findOne({
         _id: reportId,
         $or: [{ reporter: userId }, { broadcastConsent: true }]
       })
-      .populate('reporter', 'firstName lastName number email address')
-      .populate('assignedPoliceStation', 'name address contactNumber')
-      .select(req.user.id === report?.reporter.toString() ? {
-        // Full details for report owner
-        reporter: 1,
+      .populate("reporter", "firstName lastName number email address")
+      .populate("assignedPoliceStation", "name address contactNumber")
+      .populate("assignedOfficer", "firstName lastName number")
+      .select({
         type: 1,
-        personInvolved: 1,
+        personInvolved: {
+          firstName: 1,
+          lastName: 1,
+          alias: 1,
+          age: 1,
+          dateOfBirth: 1,
+          gender: 1,
+          race: 1,
+          height: 1,
+          weight: 1,
+          eyeColor: 1,
+          hairColor: 1,
+          scarsMarksTattoos: 1,
+          birthDefects: 1,
+          prosthetics: 1,
+          bloodType: 1,
+          medications: 1,
+          lastKnownClothing: 1,
+          lastSeenDate: 1,
+          lastSeentime: 1,
+          lastKnownLocation: 1,
+          contactInformation: 1,
+          relationship: 1,
+          otherInformation: 1,
+          mostRecentPhoto: 1
+        },
         additionalImages: 1,
         location: 1,
         status: 1,
         followUp: 1,
         broadcastConsent: 1,
-        assignedPoliceStation: 1,
         createdAt: 1,
         updatedAt: 1,
-        consentUpdateHistory: 1,
-        publishSchedule: 1,
-        broadcastHistory: 1
-      } : {
-        // Limited details for public view
-        type: 1,
-        'personInvolved.firstName': 1,
-        'personInvolved.lastName': 1,
-        'personInvolved.age': 1,
-        'personInvolved.dateOfBirth': 1,
-        'personInvolved.lastSeenDate': 1, 
-        'personInvolved.lastSeentime': 1,
-        'personInvolved.lastKnownLocation': 1,
-        'personInvolved.mostRecentPhoto': 1,
-        'location.address': 1,
-        'location.coordinates': 1,
-        status: 1,
-        createdAt: 1
+        assignedPoliceStation: 1,
+        assignedOfficer: 1
       });
-
-    // Case 3: Public Access - Minimal Details
-    } else {
+    }else {
       report = await Report.findOne({
         _id: reportId,
-        broadcastConsent: true
-      })
-      .select({
+        broadcastConsent: true,
+      }).select({
         type: 1,
-        'personInvolved.firstName': 1,
-        'personInvolved.lastName': 1,
-        'personInvolved.age': 1,
-        'personInvolved.lastSeenDate': 1,
-        'personInvolved.lastSeentime': 1,
-        'personInvolved.mostRecentPhoto': 1,
-        'location.address': 1,
-        createdAt: 1
+        "personInvolved.firstName": 1,
+        "personInvolved.lastName": 1,
+        "personInvolved.age": 1,
+        "personInvolved.lastSeenDate": 1,
+        "personInvolved.lastSeentime": 1,
+        "personInvolved.mostRecentPhoto": 1,
+        "location.address": 1,
+        createdAt: 1,
       });
     }
 
     if (!report) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: errorMessages.REPORT_NOT_FOUND
+        msg: errorMessages.REPORT_NOT_FOUND,
       });
     }
 
     res.status(statusCodes.OK).json({
       success: true,
-      data: report
+      data: report,
     });
-
   } catch (error) {
-    console.error('Error getting report details:', error);
+    console.error("Error getting report details:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error retrieving report details',
-      error: error.message
+      msg: "Error retrieving report details",
+      error: error.message,
     });
   }
 });
@@ -1047,15 +1197,9 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
 // Search Reports
 exports.searchReports = asyncHandler(async (req, res) => {
   try {
-    console.log('Search params:', req.query);
-    
-    const { 
-      query = '', 
-      page = 1, 
-      limit = 10,
-      status,
-      type
-    } = req.query;
+    console.log("Search params:", req.query);
+
+    const { query = "", page = 1, limit = 10, status, type } = req.query;
 
     const currentPage = parseInt(page);
     const limitPerPage = parseInt(limit);
@@ -1063,51 +1207,54 @@ exports.searchReports = asyncHandler(async (req, res) => {
 
     // Role-based filtering
     switch (req.user.roles[0]) {
-      case 'police_officer':
-      case 'police_admin':
+      case "police_officer":
+      case "police_admin":
         if (!req.user.policeStation) {
           return res.status(statusCodes.BAD_REQUEST).json({
             success: false,
-            msg: 'Officer/Admin must be assigned to a police station'
+            msg: "Officer/Admin must be assigned to a police station",
           });
         }
         searchQuery.assignedPoliceStation = req.user.policeStation;
         break;
 
-      case 'city_admin':
+      case "city_admin":
         const cityStations = await PoliceStation.find({
-          'address.city': req.user.address.city
+          "address.city": req.user.address.city,
         });
         searchQuery.assignedPoliceStation = {
-          $in: cityStations.map(station => station._id)
+          $in: cityStations.map((station) => station._id),
         };
         break;
 
-      case 'super_admin':
+      case "super_admin":
         // Super admin can see all reports
         break;
 
       default:
         return res.status(statusCodes.FORBIDDEN).json({
           success: false,
-          msg: 'Not authorized to search reports'
+          msg: "Not authorized to search reports",
         });
     }
 
     // Text search
     if (query.trim()) {
-      const searchTerms = query.trim().split(' ').filter(term => term.length > 0);
-      
+      const searchTerms = query
+        .trim()
+        .split(" ")
+        .filter((term) => term.length > 0);
+
       searchQuery.$or = [
         // Name searches
-        { 'personInvolved.firstName': { $regex: query, $options: 'i' } },
-        { 'personInvolved.lastName': { $regex: query, $options: 'i' } },
-        { 'personInvolved.alias': { $regex: query, $options: 'i' } },
+        { "personInvolved.firstName": { $regex: query, $options: "i" } },
+        { "personInvolved.lastName": { $regex: query, $options: "i" } },
+        { "personInvolved.alias": { $regex: query, $options: "i" } },
         // Location searches
-        { 'location.address.barangay': { $regex: query, $options: 'i' } },
-        { 'location.address.city': { $regex: query, $options: 'i' } },
+        { "location.address.barangay": { $regex: query, $options: "i" } },
+        { "location.address.city": { $regex: query, $options: "i" } },
         // Type search
-        { 'type': { $regex: query, $options: 'i' } }
+        { type: { $regex: query, $options: "i" } },
       ];
 
       if (searchTerms.length > 1) {
@@ -1115,15 +1262,35 @@ exports.searchReports = asyncHandler(async (req, res) => {
         searchQuery.$or.push(
           {
             $and: [
-              { 'personInvolved.firstName': { $regex: searchTerms[0], $options: 'i' } },
-              { 'personInvolved.lastName': { $regex: searchTerms[1], $options: 'i' } }
-            ]
+              {
+                "personInvolved.firstName": {
+                  $regex: searchTerms[0],
+                  $options: "i",
+                },
+              },
+              {
+                "personInvolved.lastName": {
+                  $regex: searchTerms[1],
+                  $options: "i",
+                },
+              },
+            ],
           },
           {
             $and: [
-              { 'personInvolved.firstName': { $regex: searchTerms[1], $options: 'i' } },
-              { 'personInvolved.lastName': { $regex: searchTerms[0], $options: 'i' } }
-            ]
+              {
+                "personInvolved.firstName": {
+                  $regex: searchTerms[1],
+                  $options: "i",
+                },
+              },
+              {
+                "personInvolved.lastName": {
+                  $regex: searchTerms[0],
+                  $options: "i",
+                },
+              },
+            ],
           }
         );
       }
@@ -1131,33 +1298,33 @@ exports.searchReports = asyncHandler(async (req, res) => {
 
     // Status and type filters (case insensitive)
     if (status) {
-      searchQuery.status = { $regex: new RegExp(status, 'i') };
+      searchQuery.status = { $regex: new RegExp(status, "i") };
     }
     if (type) {
-      searchQuery.type = { $regex: new RegExp(type, 'i') };
+      searchQuery.type = { $regex: new RegExp(type, "i") };
     }
 
-    console.log('Final search query:', JSON.stringify(searchQuery, null, 2));
+    console.log("Final search query:", JSON.stringify(searchQuery, null, 2));
 
     // Execute search with pagination
     const [reports, total] = await Promise.all([
       Report.find(searchQuery)
-        .populate('reporter', 'firstName lastName number email')
-        .populate('assignedPoliceStation', 'name address')
-        .populate('assignedOfficer', 'firstName lastName number')
+        .populate("reporter", "firstName lastName number email")
+        .populate("assignedPoliceStation", "name address")
+        .populate("assignedOfficer", "firstName lastName number")
         .select({
           type: 1,
           status: 1,
           personInvolved: 1,
-          'location.address': 1,
+          "location.address": 1,
           createdAt: 1,
           updatedAt: 1,
-          broadcastConsent: 1
+          broadcastConsent: 1,
         })
-        .sort('-createdAt')
+        .sort("-createdAt")
         .skip((currentPage - 1) * limitPerPage)
         .limit(limitPerPage),
-      Report.countDocuments(searchQuery)
+      Report.countDocuments(searchQuery),
     ]);
 
     res.status(statusCodes.OK).json({
@@ -1170,16 +1337,15 @@ exports.searchReports = asyncHandler(async (req, res) => {
         hasMore: currentPage * limitPerPage < total,
         query: query || null,
         type: type || null,
-        status: status || null
-      }
+        status: status || null,
+      },
     });
-
   } catch (error) {
-    console.error('Search error:', error);
+    console.error("Search error:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error searching reports',
-      error: error.message
+      msg: "Error searching reports",
+      error: error.message,
     });
   }
 });
@@ -1188,24 +1354,28 @@ exports.searchReports = asyncHandler(async (req, res) => {
 exports.reassignPoliceStation = asyncHandler(async (req, res) => {
   try {
     const { reportId, newStationId } = req.body;
-    
+
     // Authorization check
-    if (!req.user.roles.some(role => ['city_admin', 'super_admin'].includes(role))) {
+    if (
+      !req.user.roles.some((role) =>
+        ["city_admin", "super_admin"].includes(role)
+      )
+    ) {
       return res.status(statusCodes.FORBIDDEN).json({
         success: false,
-        msg: 'Only city admin or super admin can reassign police stations'
+        msg: "Only city admin or super admin can reassign police stations",
       });
     }
 
     // Get report details
     const report = await Report.findById(reportId)
-      .populate('assignedPoliceStation')
-      .populate('reporter');
-    
+      .populate("assignedPoliceStation")
+      .populate("reporter");
+
     if (!report) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: errorMessages.REPORT_NOT_FOUND
+        msg: errorMessages.REPORT_NOT_FOUND,
       });
     }
 
@@ -1214,12 +1384,12 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
     if (!newStation) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: 'New police station not found'
+        msg: "New police station not found",
       });
     }
 
     const oldStation = report.assignedPoliceStation;
-    
+
     // Update report
     report.assignedPoliceStation = newStationId;
     report.assignedOfficer = null;
@@ -1231,20 +1401,22 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
     // 1. Notify old station admins
     const oldStationAdmins = await User.find({
       policeStation: oldStation._id,
-      roles: 'police_admin',
-      deviceToken: { $exists: true }
+      roles: "police_admin",
+      deviceToken: { $exists: true },
     });
 
-    oldStationAdmins.forEach(admin => {
+    oldStationAdmins.forEach((admin) => {
       notificationPromises.push(
         sendOneSignalNotification({
           include_player_ids: [admin.deviceToken],
-          headings: { en: 'Report Reassigned' },
-          contents: { en: `Report #${report._id} has been reassigned to ${newStation.name}` },
-          data: { 
-            type: 'REPORT_REASSIGNED',
-            reportId: report._id 
-          }
+          headings: { en: "Report Reassigned" },
+          contents: {
+            en: `Report #${report._id} has been reassigned to ${newStation.name}`,
+          },
+          data: {
+            type: "REPORT_REASSIGNED",
+            reportId: report._id,
+          },
         })
       );
     });
@@ -1252,20 +1424,20 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
     // 2. Notify new station admins
     const newStationAdmins = await User.find({
       policeStation: newStationId,
-      roles: 'police_admin',
-      deviceToken: { $exists: true }
+      roles: "police_admin",
+      deviceToken: { $exists: true },
     });
 
-    newStationAdmins.forEach(admin => {
+    newStationAdmins.forEach((admin) => {
       notificationPromises.push(
         sendOneSignalNotification({
           include_player_ids: [admin.deviceToken],
-          headings: { en: 'New Report Assignment' },
+          headings: { en: "New Report Assignment" },
           contents: { en: `A new report has been assigned to your station` },
-          data: { 
-            type: 'NEW_REPORT_ASSIGNED',
-            reportId: report._id 
-          }
+          data: {
+            type: "NEW_REPORT_ASSIGNED",
+            reportId: report._id,
+          },
         })
       );
     });
@@ -1275,14 +1447,16 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
       notificationPromises.push(
         sendOneSignalNotification({
           include_player_ids: [report.reporter.deviceToken],
-          headings: { en: 'Report Update' },
-          contents: { en: `Your report has been reassigned to ${newStation.name}` },
-          data: { 
-            type: 'REPORT_REASSIGNED',
+          headings: { en: "Report Update" },
+          contents: {
+            en: `Your report has been reassigned to ${newStation.name}`,
+          },
+          data: {
+            type: "REPORT_REASSIGNED",
             reportId: report._id,
             oldStation: oldStation.name,
-            newStation: newStation.name
-          }
+            newStation: newStation.name,
+          },
         })
       );
     }
@@ -1296,16 +1470,15 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
       data: {
         report,
         oldStation: oldStation.name,
-        newStation: newStation.name
-      }
+        newStation: newStation.name,
+      },
     });
-
   } catch (error) {
-    console.error('Error reassigning police station:', error);
+    console.error("Error reassigning police station:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error reassigning police station',
-      error: error.message
+      msg: "Error reassigning police station",
+      error: error.message,
     });
   }
 });
