@@ -15,7 +15,7 @@ const initializeSocket = (server) => {
         cors: {
             origin: [
                 process.env.CLIENT_URL || "http://localhost:3000",
-                process.env.MOBILE_URL || "exp+agapayalert-client://192.168.48.191:8081"
+                process.env.MOBILE_URL || "exp+agapayalert-client://192.168.254.157:8081"
             ],
             methods: ["GET", "POST"],
             credentials: true

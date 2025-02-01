@@ -6,6 +6,7 @@ const errorMessages = require('../constants/errorMessages');
 const uploadToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('cloudinary').v2;
 const bcrypt = require('bcryptjs');
+const { getIO, SOCKET_EVENTS } = require('../utils/socketUtils');
 
 // Get user details
 exports.getUserDetails = asyncHandler(async (req, res) => {
@@ -343,6 +344,105 @@ exports.getUsers = asyncHandler(async (req, res) => {
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: 'Error retrieving users',
+      error: error.message
+    });
+  }
+});
+
+// Update Duty Status
+exports.updateDutyStatus = asyncHandler(async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { isOnDuty } = req.body;
+
+    // Validate police role
+    if (!req.user.roles.includes('police_officer')) {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        msg: 'Only police officers can update duty status'
+      });
+    }
+
+    const user = await User.findById(userId)
+      .populate('policeStation', 'name');
+    
+    if (!user) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: 'User not found'
+      });
+    }
+
+    const now = new Date();
+    const MIN_DUTY_HOURS = 8;
+
+    // Check minimum hours
+    if (!isOnDuty && user.isOnDuty && user.lastDutyChange) {
+      const hoursWorked = (now - user.lastDutyChange) / (1000 * 60 * 60);
+      
+      if (hoursWorked < MIN_DUTY_HOURS) {
+        return res.status(statusCodes.BAD_REQUEST).json({
+          success: false,
+          msg: `Cannot go off duty before completing minimum ${MIN_DUTY_HOURS} hours. Hours worked: ${hoursWorked.toFixed(2)}`
+        });
+      }
+    }
+
+    // Update duty history when going off duty
+    if (!isOnDuty && user.isOnDuty) {
+      user.dutyHistory.push({
+        startTime: user.lastDutyChange,
+        endTime: now,
+        duration: (now - user.lastDutyChange) / (1000 * 60 * 60)
+      });
+    }
+
+    // Update status
+    user.isOnDuty = isOnDuty;
+    user.lastDutyChange = isOnDuty ? now : null;
+    
+    await user.save();
+
+    // Get Socket.IO instance
+    const io = getIO();
+
+    // Emit to police station room for real-time updates
+    io.to(`policeStation_${user.policeStation._id}`).emit('DUTY_STATUS_CHANGED', {
+      officerId: user._id,
+      name: `${user.firstName} ${user.lastName}`,
+      isOnDuty: user.isOnDuty,
+      lastDutyChange: user.lastDutyChange,
+      station: user.policeStation.name,
+      dutyHistory: user.dutyHistory,
+      message: `Officer ${user.firstName} ${user.lastName} is now ${isOnDuty ? 'on duty' : 'off duty'}`
+    });
+
+    // Emit to admin room
+    io.to('role_police_admin').emit('DUTY_STATUS_CHANGED', {
+      officerId: user._id,
+      name: `${user.firstName} ${user.lastName}`,
+      isOnDuty: user.isOnDuty,
+      lastDutyChange: user.lastDutyChange,
+      station: user.policeStation.name,
+      dutyHistory: user.dutyHistory,
+      message: `Officer ${user.firstName} ${user.lastName} is now ${isOnDuty ? 'on duty' : 'off duty'}`
+    });
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: `Duty status updated to ${isOnDuty ? 'on duty' : 'off duty'}`,
+      data: {
+        isOnDuty: user.isOnDuty,
+        lastDutyChange: user.lastDutyChange,
+        dutyHistory: user.dutyHistory
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating duty status:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error updating duty status',
       error: error.message
     });
   }

@@ -82,6 +82,19 @@ const UserSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'PoliceStation',
     },
+    isOnDuty: {
+      type: Boolean,
+      default: false
+    },
+    dutyHistory: [{
+      startTime: Date,
+      endTime: Date,
+      duration: Number // in hours
+    }],
+    lastDutyChange: {
+      type: Date,
+      default: null
+    },
     isVerified: {
       type: Boolean,
       default: false,

@@ -163,84 +163,127 @@ function calculateDistance(coords1, coords2) {
 }
 
 exports.searchPoliceStations = asyncHandler(async (req, res) => {
-  const { address } = req.body;
+  const { address, coordinates } = req.body;
   
   try {
-    const geoData = await getCoordinatesFromAddress(address);
-    if (!geoData.success) {
+    let searchCoordinates;
+    let searchMethod;
+
+    // Log received query parameters
+    console.log('\n=== Search Request Details ===');
+    console.log('Input received:', {
+      coordinates: coordinates || 'Not provided',
+      address: address || 'Not provided'
+    });
+
+    // Determine search method
+    if (coordinates && Array.isArray(coordinates) && coordinates.length === 2) {
+      searchCoordinates = coordinates.map(coord => parseFloat(coord.toFixed(7)));
+      searchMethod = "USER_CURRENT_LOCATION";
+      console.log('Search Method: Using user\'s current location');
+      console.log('Normalized Coordinates:', searchCoordinates);
+    } else if (address) {
+      const geoData = await getCoordinatesFromAddress(address);
+      if (!geoData.success) {
+        return res.status(statusCodes.BAD_REQUEST).json({
+          success: false,
+          msg: geoData.message
+        });
+      }
+      searchCoordinates = geoData.coordinates.map(coord => parseFloat(coord.toFixed(7)));
+      searchMethod = "ADDRESS_LOCATION";
+      console.log('Search Method: Using provided address');
+      console.log('Address:', address);
+      console.log('Normalized Coordinates:', searchCoordinates);
+    } else {
       return res.status(statusCodes.BAD_REQUEST).json({
-        msg: geoData.message
+        success: false,
+        msg: 'Either coordinates or address must be provided'
       });
     }
 
-    // Try initial 10km radius (accounts for road distance being longer than direct distance)
-    let policeStations = await PoliceStation.find({
-      location: {
-        $near: {
-          $geometry: {
-            type: 'Point',
-            coordinates: geoData.coordinates
-          },
-          $maxDistance: 10000 // 10km radius
-        }
-      }
-    }).populate('city');
+    // Search with expanding radius
+    const searchRadii = [5000, 10000, 15000]; // 5km, 10km, 15km
+    let policeStations = [];
 
-    // If no stations found, try 20km
-    if (policeStations.length === 0) {
+    for (const radius of searchRadii) {
+      console.log(`\nSearching within ${radius/1000}km radius`);
       policeStations = await PoliceStation.find({
         location: {
           $near: {
             $geometry: {
               type: 'Point',
-              coordinates: geoData.coordinates
+              coordinates: searchCoordinates
             },
-            $maxDistance: 20000 // 20km radius
+            $maxDistance: radius
           }
         }
       }).populate('city');
+
+      if (policeStations.length > 0) {
+        console.log(`Found ${policeStations.length} stations within ${radius/1000}km`);
+        break;
+      }
     }
 
-    // If still no stations, try 30km
-    if (policeStations.length === 0) {
-      policeStations = await PoliceStation.find({
-        location: {
-          $near: {
-            $geometry: {
-              type: 'Point',
-              coordinates: geoData.coordinates
-            },
-            $maxDistance: 30000 // 30km radius
-          }
-        }
-      }).limit(5).populate('city'); // Limit to 5 nearest stations
-    }
+    // Limit to 5 nearest stations
+    policeStations = policeStations.slice(0, 5);
 
-    // Calculate actual road distance and add to each station
+    // Calculate distances with validation
     policeStations = policeStations.map(station => {
-      const directDistance = calculateDistance(
-        geoData.coordinates,
-        station.location.coordinates
-      );
-      // Estimate road distance (typically 20-30% longer than direct distance)
-      const estimatedRoadDistance = directDistance * 1.3;
-      return {
-        ...station.toObject(),
-        directDistance: parseFloat(directDistance.toFixed(2)),
-        estimatedRoadDistance: parseFloat(estimatedRoadDistance.toFixed(2))
-      };
+      const stationObj = station.toObject();
+      
+      console.log(`\n=== Distance Calculation for ${station.name} ===`);
+      console.log('From:', searchCoordinates);
+      console.log('To:', station.location.coordinates);
+      
+      try {
+        const directDistance = calculateDistance(
+          searchCoordinates,
+          station.location.coordinates
+        );
+        
+        console.log('Raw Direct Distance:', directDistance);
+        const normalizedDirectDistance = parseFloat(directDistance.toFixed(2));
+        const estimatedRoadDistance = parseFloat((directDistance * 1.3).toFixed(2));
+        
+        console.log('Normalized Direct Distance:', normalizedDirectDistance);
+        console.log('Estimated Road Distance:', estimatedRoadDistance);
+
+        return {
+          ...stationObj,
+          directDistance: normalizedDirectDistance,
+          estimatedRoadDistance: estimatedRoadDistance,
+          searchMethod
+        };
+      } catch (error) {
+        console.error('Distance calculation error:', error);
+        return {
+          ...stationObj,
+          directDistance: null,
+          estimatedRoadDistance: null,
+          error: 'Failed to calculate distance'
+        };
+      }
     });
 
     // Sort by estimated road distance
-    policeStations.sort((a, b) => a.estimatedRoadDistance - b.estimatedRoadDistance);
+    policeStations.sort((a, b) => {
+      if (!a.estimatedRoadDistance) return 1;
+      if (!b.estimatedRoadDistance) return -1;
+      return a.estimatedRoadDistance - b.estimatedRoadDistance;
+    });
 
     res.status(statusCodes.OK).json({
       success: true,
+      searchMethod,
+      searchCoordinates,
       policeStations,
-      coordinates: geoData.coordinates,
-      addressUsed: geoData.addressUsed,
-      searchRadius: policeStations.length > 0 ? 
-        `Approximately ${policeStations[0].estimatedRoadDistance} km by road` : 'No stations found'
+      totalFound: policeStations.length,
+      nearestStation: policeStations[0] ? {
+        name: policeStations[0].name,
+        distance: policeStations[0].estimatedRoadDistance
+      } : null
     });
 
   } catch (error) {

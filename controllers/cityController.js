@@ -39,8 +39,27 @@ exports.createCity = asyncHandler(async (req, res) => {
 
 // Get all cities
 exports.getCities = asyncHandler(async (req, res) => {
-  const cities = await City.find().populate('policeStations');
-  res.status(statusCodes.OK).json(cities);
+  try {
+    const cities = await City.find()
+      .select({
+        name: 1,
+        image: 1
+      })
+      .sort({ name: 1 });
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: cities
+    });
+    
+  } catch (error) {
+    console.error('Error fetching cities:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error retrieving cities',
+      error: error.message
+    });
+  }
 });
 
 // Get a single city by ID
