@@ -21,7 +21,8 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const chartRoutes = require('./routes/chartRoutes');
 const alprRoutes = require('./routes/alprRoutes');
 const feedbackRoutes = require('./routes/feedbackRoutes');
-const messengerRoutes = require('./routes/messngerRoutes');
+const messengerRoutes = require('./routes/messengerRoutes');
+const { initializeMessenger } = require('./controllers/messengerController');
 // Load env vars
 dotenv.config();
 
@@ -99,13 +100,27 @@ app.use((req, res) => {
 });
 
 //messenger
-
-// Start server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
-});
-
+const startServer = async () => {
+    try {
+      const PORT = process.env.PORT || 3000;
+      
+      console.log('Initializing Messenger...');
+      const messengerInitialized = await initializeMessenger();
+      if (!messengerInitialized) {
+        console.warn('⚠️ Messenger initialization failed, but server will continue');
+      }
+      
+      server.listen(PORT, () => {
+        console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+      });
+    } catch (error) {
+      console.error('Failed to start server:', error);
+      process.exit(1);
+    }
+  };
+  
+  // Start server
+  startServer();
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
     console.log('UNHANDLED REJECTION! 💥 Shutting down...');

@@ -115,6 +115,11 @@ const UserSchema = new mongoose.Schema(
     resetPasswordExpires: {
       type: Date,
     },
+    messengerPSID: {
+    type: String,
+    unique: true,
+    sparse: true 
+  },
     preferredNotifications: {
       sms: {
         type: Boolean,
