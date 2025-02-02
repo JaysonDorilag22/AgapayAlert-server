@@ -53,19 +53,23 @@ exports.handleMessage = async (sender_psid, received_message) => {
   try {
     console.log('📨 New message from:', sender_psid);
 
-    // Send welcome with PSID
+    // Send welcome message with buttons
     await sendResponse(sender_psid, {
-      text: `Welcome to AgapayAlert! 👋\n\nYour PSID is: ${sender_psid}\n\nSave this PSID to link your account.`
+      attachment: {
+        type: "template",
+        payload: {
+          template_type: "button",
+          text: "Welcome to AgapayAlert! 👋\nClick the button below to get started:",
+          buttons: [
+            {
+              type: "postback",
+              title: "Get Started",
+              payload: "GET_STARTED"
+            }
+          ]
+        }
+      }
     });
-
-    // Store PSID
-    await User.findOneAndUpdate(
-      { messengerPSID: sender_psid },
-      { messengerPSID: sender_psid },
-      { upsert: true, new: true }
-    );
-
-    console.log('✅ PSID stored for:', sender_psid);
 
   } catch (error) {
     console.error('❌ Error handling message:', error);
@@ -74,19 +78,51 @@ exports.handleMessage = async (sender_psid, received_message) => {
 
 exports.handlePostback = async (sender_psid, postback) => {
   try {
-    console.log('🔄 Postback from:', sender_psid);
+    console.log('🔄 Processing postback:', postback.payload);
 
     if (postback.payload === 'GET_STARTED') {
+      // Send PSID message
       await sendResponse(sender_psid, {
-        text: `Welcome to AgapayAlert! 👋\n\nYour PSID is: ${sender_psid}\n\nSave this PSID to link your account.`
+        text: `Thank you for connecting with AgapayAlert! 🚨\n\nYour PSID is: ${sender_psid}\n\nSave this PSID to link your account in the AgapayAlert app.`
       });
 
-      // Store PSID on Get Started
+      // Store PSID
       await User.findOneAndUpdate(
         { messengerPSID: sender_psid },
         { messengerPSID: sender_psid },
         { upsert: true, new: true }
       );
+
+      // Send menu options
+      await sendResponse(sender_psid, {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "generic",
+            elements: [{
+              title: "AgapayAlert Services",
+              subtitle: "Get real-time alerts about missing persons in your area",
+              image_url: "https://raw.githubusercontent.com/jay0927/AgapayAlert/main/frontend/src/assets/img/logo.png",
+              buttons: [
+                {
+                  type: "postback",
+                  title: "About Us",
+                  payload: "ABOUT_US"
+                },
+                {
+                  type: "web_url",
+                  url: "https://jsond.onrender.com/",
+                  title: "Visit Website"
+                }
+              ]
+            }]
+          }
+        }
+      });
+    } else if (postback.payload === "ABOUT_US") {
+      await sendResponse(sender_psid, {
+        text: "AgapayAlert is a community-driven platform helping locate missing persons through real-time alerts and coordination with local authorities. 🚨\n\nWe work together to make our communities safer."
+      });
     }
   } catch (error) {
     console.error('❌ Error handling postback:', error);
