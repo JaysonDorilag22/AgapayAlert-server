@@ -21,7 +21,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const chartRoutes = require('./routes/chartRoutes');
 const alprRoutes = require('./routes/alprRoutes');
 const feedbackRoutes = require('./routes/feedbackRoutes');
-
+const messengerRoutes = require('./routes/messngerRoutes');
 // Load env vars
 dotenv.config();
 
@@ -86,7 +86,7 @@ app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/charts', chartRoutes);
 app.use('/api/v1/alpr', alprRoutes);
 app.use('/api/v1/feedback', feedbackRoutes);
-
+app.use('/api/messenger', messengerRoutes);
 // Error handling
 app.use(errorHandler);
 
@@ -97,6 +97,8 @@ app.use((req, res) => {
         message: 'Route not found' 
     });
 });
+
+//messenger
 
 // Start server
 const PORT = process.env.PORT || 3000;
