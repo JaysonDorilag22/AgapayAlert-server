@@ -1,16 +1,17 @@
-const User = require('../models/userModel');
-const PoliceStation = require('../models/policeStationModel');
-const asyncHandler = require('express-async-handler');
-const statusCodes = require('../constants/statusCodes');
-const errorMessages = require('../constants/errorMessages');
-const uploadToCloudinary = require('../utils/uploadToCloudinary');
-const cloudinary = require('cloudinary').v2;
-const bcrypt = require('bcryptjs');
-const { getIO, SOCKET_EVENTS } = require('../utils/socketUtils');
+const User = require("../models/userModel");
+const PoliceStation = require("../models/policeStationModel");
+const Report = require("../models/reportModel");
+const asyncHandler = require("express-async-handler");
+const statusCodes = require("../constants/statusCodes");
+const errorMessages = require("../constants/errorMessages");
+const uploadToCloudinary = require("../utils/uploadToCloudinary");
+const cloudinary = require("cloudinary").v2;
+const bcrypt = require("bcryptjs");
+const { getIO, SOCKET_EVENTS } = require("../utils/socketUtils");
 
 // Get user details
 exports.getUserDetails = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.userId).select('-password');
+  const user = await User.findById(req.params.userId).select("-password");
 
   if (!user) {
     return res.status(statusCodes.NOT_FOUND).json({ msg: errorMessages.USER_NOT_FOUND });
@@ -37,7 +38,7 @@ exports.updateUserDetails = asyncHandler(async (req, res) => {
     }
 
     // Upload new avatar to Cloudinary
-    const uploadResult = await uploadToCloudinary(file.path, 'avatars');
+    const uploadResult = await uploadToCloudinary(file.path, "avatars");
     user.avatar = {
       url: uploadResult.url,
       public_id: uploadResult.public_id,
@@ -54,7 +55,7 @@ exports.updateUserDetails = asyncHandler(async (req, res) => {
     const notificationCount = [sms, push, email].filter(Boolean).length;
 
     if (notificationCount > 1) {
-      return res.status(statusCodes.BAD_REQUEST).json({ msg: 'Only one notification type can be set to true' });
+      return res.status(statusCodes.BAD_REQUEST).json({ msg: "Only one notification type can be set to true" });
     }
 
     user.preferredNotifications = preferredNotifications;
@@ -78,13 +79,13 @@ exports.changePassword = asyncHandler(async (req, res) => {
   const isMatch = await bcrypt.compare(currentPassword, user.password);
 
   if (!isMatch) {
-    return res.status(statusCodes.BAD_REQUEST).json({ msg: 'Current password did not match' });
+    return res.status(statusCodes.BAD_REQUEST).json({ msg: "Current password did not match" });
   }
 
   user.password = newPassword;
   await user.save();
 
-  res.status(statusCodes.OK).json({ msg: 'Password changed successfully' });
+  res.status(statusCodes.OK).json({ msg: "Password changed successfully" });
 });
 
 // Delete user
@@ -101,7 +102,7 @@ exports.deleteUser = asyncHandler(async (req, res) => {
 
   await user.deleteOne();
 
-  res.status(statusCodes.OK).json({ msg: 'User deleted successfully' });
+  res.status(statusCodes.OK).json({ msg: "User deleted successfully" });
 });
 
 // Create a new user with a specific role
@@ -113,34 +114,34 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
 
     // Validate allowed role creation based on creator's role
     const allowedRoles = {
-      police_admin: ['police_officer'],
-      city_admin: ['police_admin', 'police_officer'],
-      super_admin: ['city_admin', 'police_admin', 'police_officer']
+      police_admin: ["police_officer"],
+      city_admin: ["police_admin", "police_officer"],
+      super_admin: ["city_admin", "police_admin", "police_officer"],
     };
 
     if (!allowedRoles[creatorRole]?.includes(role)) {
-      return res.status(statusCodes.FORBIDDEN).json({ 
+      return res.status(statusCodes.FORBIDDEN).json({
         success: false,
-        msg: `${creatorRole} cannot create ${role} accounts` 
+        msg: `${creatorRole} cannot create ${role} accounts`,
       });
     }
 
     // Check if user already exists
     let user = await User.findOne({ email });
     if (user) {
-      return res.status(statusCodes.CONFLICT).json({ 
-        msg: errorMessages.USER_ALREADY_EXISTS 
+      return res.status(statusCodes.CONFLICT).json({
+        msg: errorMessages.USER_ALREADY_EXISTS,
       });
     }
 
     // Handle avatar
     let avatar = {
-      url: 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
-      public_id: 'default_avatar',
+      url: "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png",
+      public_id: "default_avatar",
     };
 
     if (file) {
-      const uploadResult = await uploadToCloudinary(file.path, 'avatars');
+      const uploadResult = await uploadToCloudinary(file.path, "avatars");
       avatar = {
         url: uploadResult.url,
         public_id: uploadResult.public_id,
@@ -149,42 +150,42 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
 
     // Validate police station and city based on creator's role
     let policeStation = null;
-    if (role === 'police_officer' || role === 'police_admin') {
+    if (role === "police_officer" || role === "police_admin") {
       policeStation = await PoliceStation.findById(policeStationId);
-      
+
       if (!policeStation) {
-        return res.status(statusCodes.BAD_REQUEST).json({ 
-          msg: errorMessages.POLICE_STATION_NOT_FOUND 
+        return res.status(statusCodes.BAD_REQUEST).json({
+          msg: errorMessages.POLICE_STATION_NOT_FOUND,
         });
       }
 
       // For police_admin creating officers
-      if (creatorRole === 'police_admin') {
+      if (creatorRole === "police_admin") {
         if (policeStation._id.toString() !== req.user.policeStation.toString()) {
           return res.status(statusCodes.FORBIDDEN).json({
             success: false,
-            msg: 'Can only create officers for your own police station'
+            msg: "Can only create officers for your own police station",
           });
         }
       }
 
       // For city_admin creating police_admin/officers
-      if (creatorRole === 'city_admin') {
+      if (creatorRole === "city_admin") {
         if (policeStation.address.city !== req.user.address.city) {
           return res.status(statusCodes.FORBIDDEN).json({
             success: false,
-            msg: 'Can only create users for police stations in your city'
+            msg: "Can only create users for police stations in your city",
           });
         }
       }
     }
 
     // For city_admin role, ensure city matches creator's city
-    if (role === 'city_admin' && creatorRole === 'super_admin') {
+    if (role === "city_admin" && creatorRole === "super_admin") {
       if (!address?.city) {
         return res.status(statusCodes.BAD_REQUEST).json({
           success: false,
-          msg: 'City is required for city admin accounts'
+          msg: "City is required for city admin accounts",
         });
       }
     }
@@ -207,21 +208,20 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
 
     res.status(statusCodes.CREATED).json({
       success: true,
-      msg: 'User created successfully',
+      msg: "User created successfully",
       data: {
         user: {
           ...user.toObject(),
-          password: undefined
-        }
-      }
+          password: undefined,
+        },
+      },
     });
-
   } catch (error) {
-    console.error('Error creating user:', error);
-    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({ 
+    console.error("Error creating user:", error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error creating user', 
-      error: error.message 
+      msg: "Error creating user",
+      error: error.message,
     });
   }
 });
@@ -229,93 +229,85 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
 // Get users based on role and permissions
 exports.getUsers = asyncHandler(async (req, res) => {
   try {
-    const { 
-      role, 
-      city, 
-      policeStation,
-      search,
-      isActive,
-      page = 1, 
-      limit = 10 
-    } = req.query;
-    
+    const { role, city, policeStation, search, isActive, page = 1, limit = 10 } = req.query;
+
     const userRole = req.user.roles[0];
     let query = {};
 
     // Base query for search
     if (search) {
       query.$or = [
-        { firstName: { $regex: search, $options: 'i' } },
-        { lastName: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } }
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
       ];
     }
 
     // Filter by active status
     if (isActive !== undefined) {
-      query.isActive = isActive === 'true';
+      query.isActive = isActive === "true";
     }
 
     // Role-based query building
     switch (userRole) {
-      case 'police_officer':
-      case 'police_admin':
+      case "police_officer":
+      case "police_admin":
         if (!req.user.policeStation) {
           return res.status(statusCodes.BAD_REQUEST).json({
             success: false,
-            msg: 'No police station assigned'
+            msg: "No police station assigned",
           });
         }
         query.policeStation = req.user.policeStation;
         if (role) query.roles = role;
         break;
 
-      case 'city_admin':
+      case "city_admin":
         const cityStations = await PoliceStation.find({
-          'address.city': req.user.address.city
+          "address.city": req.user.address.city,
         });
-        
+
         let cityQuery = {
           $or: [
-            { 
-              policeStation: { 
-                $in: cityStations.map(station => station._id) 
-              }
+            {
+              policeStation: {
+                $in: cityStations.map((station) => station._id),
+              },
             },
             {
-              roles: 'city_admin',
-              'address.city': req.user.address.city
-            }
-          ]
+              roles: "city_admin",
+              "address.city": req.user.address.city,
+            },
+          ],
         };
 
         // Add filters
         if (role) cityQuery.roles = role;
-        if (policeStation && cityStations.find(s => s._id.toString() === policeStation)) {
+        if (policeStation && cityStations.find((s) => s._id.toString() === policeStation)) {
           cityQuery.policeStation = policeStation;
         }
 
         query = { ...query, ...cityQuery };
         break;
 
-      case 'super_admin':
+      case "super_admin":
         if (role) query.roles = role;
-        if (city) query['address.city'] = city;
+        if (city) query["address.city"] = city;
         if (policeStation) query.policeStation = policeStation;
         break;
 
       default:
         return res.status(statusCodes.FORBIDDEN).json({
           success: false,
-          msg: 'Not authorized to view users'
+          msg: "Not authorized to view users",
         });
     }
 
     // Execute query with pagination
     const users = await User.find(query)
-      .select('-password')
-      .populate('policeStation', 'name address')
-      .sort('firstName')
+      .select("-password")
+      .populate("policeStation", "name address")
+      .sort("firstName")
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
 
@@ -330,46 +322,45 @@ exports.getUsers = asyncHandler(async (req, res) => {
           city,
           policeStation,
           search,
-          isActive
+          isActive,
         },
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
         totalUsers: total,
-        hasMore: page * limit < total
-      }
+        hasMore: page * limit < total,
+      },
     });
-
   } catch (error) {
-    console.error('Error fetching users:', error);
+    console.error("Error fetching users:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error retrieving users',
-      error: error.message
+      msg: "Error retrieving users",
+      error: error.message,
     });
   }
 });
 
 // Update Duty Status
 exports.updateDutyStatus = asyncHandler(async (req, res) => {
+  console.log("touch");
   try {
     const userId = req.user.id;
     const { isOnDuty } = req.body;
 
-    // Validate police role
-    if (!req.user.roles.includes('police_officer')) {
+    // Validate police roles
+    if (!req.user.roles.some((role) => ["police_officer", "police_admin"].includes(role))) {
       return res.status(statusCodes.FORBIDDEN).json({
         success: false,
-        msg: 'Only police officers can update duty status'
+        msg: "Only police officers and admins can update duty status",
       });
     }
 
-    const user = await User.findById(userId)
-      .populate('policeStation', 'name');
-    
+    const user = await User.findById(userId).populate("policeStation", "name");
+
     if (!user) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: 'User not found'
+        msg: "User not found",
       });
     }
 
@@ -379,11 +370,13 @@ exports.updateDutyStatus = asyncHandler(async (req, res) => {
     // Check minimum hours
     if (!isOnDuty && user.isOnDuty && user.lastDutyChange) {
       const hoursWorked = (now - user.lastDutyChange) / (1000 * 60 * 60);
-      
+
       if (hoursWorked < MIN_DUTY_HOURS) {
         return res.status(statusCodes.BAD_REQUEST).json({
           success: false,
-          msg: `Cannot go off duty before completing minimum ${MIN_DUTY_HOURS} hours. Hours worked: ${hoursWorked.toFixed(2)}`
+          msg: `Cannot go off duty before completing minimum ${MIN_DUTY_HOURS} hours. Hours worked: ${hoursWorked.toFixed(
+            2
+          )}`,
         });
       }
     }
@@ -393,58 +386,201 @@ exports.updateDutyStatus = asyncHandler(async (req, res) => {
       user.dutyHistory.push({
         startTime: user.lastDutyChange,
         endTime: now,
-        duration: (now - user.lastDutyChange) / (1000 * 60 * 60)
+        duration: (now - user.lastDutyChange) / (1000 * 60 * 60),
       });
     }
 
     // Update status
     user.isOnDuty = isOnDuty;
     user.lastDutyChange = isOnDuty ? now : null;
-    
+
     await user.save();
 
     // Get Socket.IO instance
     const io = getIO();
 
     // Emit to police station room for real-time updates
-    io.to(`policeStation_${user.policeStation._id}`).emit('DUTY_STATUS_CHANGED', {
+    io.to(`policeStation_${user.policeStation._id}`).emit("DUTY_STATUS_CHANGED", {
       officerId: user._id,
       name: `${user.firstName} ${user.lastName}`,
+      role: user.roles[0], // Add role to identify if admin or officer
       isOnDuty: user.isOnDuty,
       lastDutyChange: user.lastDutyChange,
       station: user.policeStation.name,
       dutyHistory: user.dutyHistory,
-      message: `Officer ${user.firstName} ${user.lastName} is now ${isOnDuty ? 'on duty' : 'off duty'}`
+      message: `${user.roles[0] === "police_admin" ? "Admin" : "Officer"} ${user.firstName} ${user.lastName} is now ${
+        isOnDuty ? "on duty" : "off duty"
+      }`,
     });
 
     // Emit to admin room
-    io.to('role_police_admin').emit('DUTY_STATUS_CHANGED', {
+    io.to("role_police_admin").emit("DUTY_STATUS_CHANGED", {
       officerId: user._id,
       name: `${user.firstName} ${user.lastName}`,
+      role: user.roles[0],
       isOnDuty: user.isOnDuty,
       lastDutyChange: user.lastDutyChange,
       station: user.policeStation.name,
       dutyHistory: user.dutyHistory,
-      message: `Officer ${user.firstName} ${user.lastName} is now ${isOnDuty ? 'on duty' : 'off duty'}`
+      message: `${user.roles[0] === "police_admin" ? "Admin" : "Officer"} ${user.firstName} ${user.lastName} is now ${
+        isOnDuty ? "on duty" : "off duty"
+      }`,
     });
 
     res.status(statusCodes.OK).json({
       success: true,
-      msg: `Duty status updated to ${isOnDuty ? 'on duty' : 'off duty'}`,
+      msg: `Duty status updated to ${isOnDuty ? "on duty" : "off duty"}`,
       data: {
         isOnDuty: user.isOnDuty,
         lastDutyChange: user.lastDutyChange,
-        dutyHistory: user.dutyHistory
-      }
+        dutyHistory: user.dutyHistory,
+      },
     });
-
   } catch (error) {
-    console.error('Error updating duty status:', error);
+    console.error("Error updating duty status:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      msg: 'Error updating duty status',
-      error: error.message
+      msg: "Error updating duty status",
+      error: error.message,
     });
   }
 });
 
+// Get police station officers and their reports
+exports.getPoliceStationOfficers = asyncHandler(async (req, res) => {
+  try {
+    const { policeStationId } = req.params;
+
+    // Validate policeStationId
+    if (!policeStationId || policeStationId === "null") {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: "Valid police station ID is required",
+      });
+    }
+
+    const io = getIO();
+    const room = `policeStation_${policeStationId}`;
+
+    // Validate police station exists
+    const policeStation = await PoliceStation.findById(policeStationId);
+    if (!policeStation) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: "Police station not found",
+      });
+    }
+
+    // Get all officers in the police station
+    const officers = await User.find({
+      policeStation: policeStationId,
+      roles: "police_officer",
+    })
+      .select("firstName lastName isOnDuty lastDutyChange dutyHistory avatar")
+      .lean();
+
+    // Get all reports assigned to officers in this station
+    const reports = await Report.find({
+      assignedPoliceStation: policeStationId,
+      assignedOfficer: { $exists: true },
+    })
+      .select("type status assignedOfficer personInvolved location createdAt")
+      .populate("assignedOfficer", "firstName lastName")
+      .lean();
+
+    // Map reports to officers
+    const officersWithReports = officers.map((officer) => {
+      const officerReports = reports.filter(
+        (report) => report.assignedOfficer && report.assignedOfficer._id.toString() === officer._id.toString()
+      );
+
+      return {
+        ...officer,
+        reports: officerReports,
+        activeReports: officerReports.filter((r) => r.status !== "Resolved").length,
+        totalReports: officerReports.length,
+      };
+    });
+
+    // Set up Socket.IO event handlers at the server level
+    io.on("connection", (socket) => {
+      // Join the police station room
+      socket.join(room);
+
+      // Handle officer status updates
+      socket.on("OFFICER_STATUS_UPDATE", async (data) => {
+        if (!data.officerId) return;
+
+        const updatedOfficer = await User.findById(data.officerId)
+          .select("firstName lastName isOnDuty lastDutyChange dutyHistory")
+          .lean();
+
+        if (updatedOfficer) {
+          io.to(room).emit("OFFICER_UPDATED", {
+            officerId: updatedOfficer._id,
+            isOnDuty: updatedOfficer.isOnDuty,
+            lastDutyChange: updatedOfficer.lastDutyChange,
+            dutyHistory: updatedOfficer.dutyHistory,
+          });
+        }
+      });
+
+      // Handle report assignments
+      socket.on("REPORT_ASSIGNED", async (data) => {
+        if (!data.reportId) return;
+
+        const updatedReport = await Report.findById(data.reportId)
+          .select("type status assignedOfficer personInvolved location createdAt")
+          .populate("assignedOfficer", "firstName lastName")
+          .lean();
+
+        if (updatedReport) {
+          io.to(room).emit("REPORT_UPDATED", {
+            report: updatedReport,
+          });
+        }
+      });
+    });
+
+    const summary = {
+      totalOfficers: officers.length,
+      onDutyOfficers: officers.filter((o) => o.isOnDuty).length,
+      totalReports: reports.length,
+      activeReports: reports.filter((r) => r.status !== "Resolved").length,
+    };
+
+    // Map and log officer details
+    officers.forEach((officer) => {
+      const officerReports = reports.filter(
+        (report) => report.assignedOfficer && report.assignedOfficer._id.toString() === officer._id.toString()
+      );
+
+      console.log(`\n👮 ${officer.firstName} ${officer.lastName}:`, {
+        isOnDuty: officer.isOnDuty ? "✅ On Duty" : "❌ Off Duty",
+        lastDutyChange: officer.lastDutyChange ? new Date(officer.lastDutyChange).toLocaleString() : "N/A",
+        totalReports: officerReports.length,
+        activeReports: officerReports.filter((r) => r.status !== "Resolved").length,
+        resolvedReports: officerReports.filter((r) => r.status === "Resolved").length,
+      });
+    });
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        policeStation: {
+          name: policeStation.name,
+          address: policeStation.address,
+        },
+        officers: officersWithReports,
+        summary,
+      },
+    });
+  } catch (error) {
+    console.error("Error getting police station officers:", error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: "Error retrieving police station officers",
+      error: error.message,
+    });
+  }
+});
