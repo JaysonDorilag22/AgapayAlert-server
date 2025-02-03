@@ -43,17 +43,12 @@ const sendPushNotification = async (message, recipients) => {
 const createFacebookPost = async (report) => {
   const url = `${FACEBOOK_GRAPH_API_URL}/${process.env.FACEBOOK_PAGE_ID}/photos`;
   const content = broadcastTemplates.facebook(report);
-  const data = {
-    caption: content.message,
-    url: content.image,
-    access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
-  };
-
+  
   try {
-    const response = await axios.post(url, data, {
-      headers: {
-        "Content-Type": "application/json",
-      },
+    const response = await axios.post(url, {
+      caption: content.message,
+      url: content.image,
+      access_token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
     });
 
     return {
@@ -62,14 +57,10 @@ const createFacebookPost = async (report) => {
       data: response.data,
     };
   } catch (error) {
-    console.error("Facebook API Error:", {
-      message: error.response?.data?.error?.message,
-      code: error.response?.data?.error?.code,
-      type: error.response?.data?.error?.type,
-    });
+    console.error("Facebook API Error:", error.response?.data || error);
     return {
       success: false,
-      error: error.response?.data?.error?.message || error.message,
+      error: error.message
     };
   }
 };

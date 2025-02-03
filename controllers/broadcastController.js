@@ -2,7 +2,7 @@ const Report = require("../models/reportModel");
 const User = require("../models/userModel");
 const asyncHandler = require("express-async-handler");
 const statusCodes = require("../constants/statusCodes");
-const { sendOneSignalNotification, sendSMSNotification } = require("../utils/notificationUtils");
+const { sendOneSignalNotification } = require("../utils/notificationUtils");
 const { createFacebookPost, deleteFacebookPost } = require("../utils/broadcastUtils");
 const notificationController = require("./notificationController");
 const axios = require("axios");
@@ -15,11 +15,7 @@ exports.publishReport = asyncHandler(async (req, res) => {
     const { reportId } = req.params;
     const {
       broadcastType,
-      scope = {
-        type: "city",
-        city: null,
-        radius: null,
-      },
+      scope = { type: "city", city: null, radius: null }
     } = req.body;
 
     // 1. Validate Report
@@ -27,14 +23,14 @@ exports.publishReport = asyncHandler(async (req, res) => {
     if (!report) {
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: "Report not found",
+        msg: "Report not found"
       });
     }
 
     if (!report.broadcastConsent) {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
-        msg: "No broadcast consent given for this report",
+        msg: "No broadcast consent given for this report"
       });
     }
 
@@ -44,7 +40,7 @@ exports.publishReport = asyncHandler(async (req, res) => {
       case "city":
         targetUsers = await User.find({
           "address.city": scope.city,
-          deviceToken: { $exists: true, $ne: null },
+          deviceToken: { $exists: true, $ne: null }
         });
         break;
 
@@ -54,28 +50,28 @@ exports.publishReport = asyncHandler(async (req, res) => {
             $near: {
               $geometry: {
                 type: "Point",
-                coordinates: report.location.coordinates,
+                coordinates: report.location.coordinates
               },
-              $maxDistance: scope.radius * 1000,
-            },
+              $maxDistance: scope.radius * 1000
+            }
           },
-          deviceToken: { $exists: true, $ne: null },
+          deviceToken: { $exists: true, $ne: null }
         });
         break;
 
       case "all":
         targetUsers = await User.find({
-          deviceToken: { $exists: true, $ne: null },
+          deviceToken: { $exists: true, $ne: null }
         });
         break;
     }
 
-    // 3. Get Content from Templates
+    // 3. Get Content Templates
     const pushContent = broadcastTemplates.report(report);
-    const smsContent = broadcastTemplates.sms(report);
     const fbContent = broadcastTemplates.facebook(report);
+    const messengerContent = broadcastTemplates.messenger(report);
 
-    // 4. Execute Broadcast
+    // 4. Initialize Broadcast Record
     let broadcastResults = {};
     const broadcastRecord = {
       date: new Date(),
@@ -86,14 +82,15 @@ exports.publishReport = asyncHandler(async (req, res) => {
       targetedUsers: targetUsers.length,
       deliveryStats: {
         push: 0,
-        sms: 0,
-        facebook: 0,
-      },
+        messenger: 0,
+        facebook: 0
+      }
     };
 
+    // 5. Execute Broadcast
     switch (broadcastType) {
       case "Push Notification":
-        const deviceIds = targetUsers.map((user) => user.deviceToken).filter(Boolean);
+        const deviceIds = targetUsers.map(user => user.deviceToken).filter(Boolean);
         if (deviceIds.length > 0) {
           broadcastResults.push = await sendOneSignalNotification({
             ...pushContent,
@@ -101,144 +98,135 @@ exports.publishReport = asyncHandler(async (req, res) => {
             data: {
               reportId: report._id,
               type: report.type,
-              image: report.personInvolved.mostRecentPhoto.url,
-            },
+              image: report.personInvolved.mostRecentPhoto.url
+            }
           });
           broadcastRecord.deliveryStats.push = deviceIds.length;
         }
         broadcastRecord.method.push("Push Notification");
         break;
 
-      case "SMS":
-        const phones = targetUsers.map((user) => user.number).filter(Boolean);
-        broadcastResults.sms = await sendSMSNotification({
-          phones,
-          message: smsContent.message,
-        });
-        broadcastRecord.method.push("SMS");
-        broadcastRecord.deliveryStats.sms = phones.length;
+      case "Messenger":
+        // Send to Messenger subscribers
+        const messengerBroadcast = await sendMessengerBroadcast(report);
+        broadcastResults.messenger = messengerBroadcast;
+        if (messengerBroadcast.success) {
+          broadcastRecord.method.push("Messenger");
+          broadcastRecord.deliveryStats.messenger = messengerBroadcast.count;
+          broadcastRecord.notes = "Messenger broadcast sent successfully";
+        } else {
+          broadcastRecord.notes = `Messenger broadcast failed: ${messengerBroadcast.error}`;
+        }
         break;
 
       case "Facebook Post":
         try {
-          broadcastResults.facebook = await createFacebookPost(report);
-          if (broadcastResults.facebook.success) {
+          const fbBroadcast = await createFacebookPost(report);
+          broadcastResults.facebook = fbBroadcast;
+          if (fbBroadcast.success) {
             broadcastRecord.method.push("Facebook Post");
             broadcastRecord.deliveryStats.facebook = 1;
-            broadcastRecord.facebookPostId = broadcastResults.facebook.postId;
-
-            // Add Facebook-specific notification details
+            broadcastRecord.facebookPostId = fbBroadcast.postId;
             broadcastRecord.notes = "Posted successfully to Facebook page";
           } else {
-            console.error("Facebook post creation failed:", broadcastResults.facebook.error);
-            broadcastRecord.notes = `Facebook post failed: ${broadcastResults.facebook.error}`;
+            broadcastRecord.notes = `Facebook post failed: ${fbBroadcast.error}`;
           }
-        } catch (fbError) {
-          console.error("Facebook post error:", fbError);
-          broadcastResults.facebook = {
-            success: false,
-            error: fbError.message,
-          };
-          broadcastRecord.notes = `Facebook post error: ${fbError.message}`;
+        } catch (error) {
+          console.error("Facebook post error:", error);
+          broadcastRecord.notes = `Facebook post error: ${error.message}`;
         }
         break;
 
-        case "all":
-          const allDeviceIds = targetUsers.map((user) => user.deviceToken).filter(Boolean);
-          const [pushResult, messengerResult, fbResult] = await Promise.all([
-            allDeviceIds.length > 0
-              ? sendOneSignalNotification({
-                  ...pushContent,
-                  include_player_ids: allDeviceIds,
-                  data: {
-                    reportId: report._id,
-                    type: report.type,
-                    image: report.personInvolved.mostRecentPhoto.url,
-                  },
-                })
-              : { success: false, msg: "No valid device tokens" },
-            sendMessengerBroadcast(report),
-            createFacebookPost(report),
-          ]);
-        
-          broadcastResults = { 
-            push: pushResult, 
-            messenger: messengerResult, 
-            facebook: fbResult 
-          };
-          
-          if (broadcastResults.messenger.success) {
-            broadcastRecord.method.push("Messenger");
-            broadcastRecord.deliveryStats.messenger = broadcastResults.messenger.count;
-          }
+      case "all":
+        // Execute all broadcast types simultaneously
+        const allDeviceIds = targetUsers.map(user => user.deviceToken).filter(Boolean);
+        const [pushBroadcast, msgBroadcast, fbBroadcast] = await Promise.all([
+          allDeviceIds.length > 0
+            ? sendOneSignalNotification({
+                ...pushContent,
+                include_player_ids: allDeviceIds,
+                data: {
+                  reportId: report._id,
+                  type: report.type,
+                  image: report.personInvolved.mostRecentPhoto.url
+                }
+              })
+            : { success: false, msg: "No valid device tokens" },
+          sendMessengerBroadcast(report),
+          createFacebookPost(report)
+        ]);
 
-        broadcastResults = { push: pushResult, sms: smsResult, facebook: fbResult };
-        broadcastRecord.method = ["Push Notification", "SMS", "Facebook Post"];
+        broadcastResults = {
+          push: pushBroadcast,
+          messenger: msgBroadcast,
+          facebook: fbBroadcast
+        };
+
+        broadcastRecord.method = ["Push Notification", "Messenger", "Facebook Post"];
         broadcastRecord.deliveryStats = {
           push: allDeviceIds.length,
-          sms: targetUsers.filter((u) => u.number).length,
-          facebook: fbResult.success ? 1 : 0,
+          messenger: msgBroadcast.success ? msgBroadcast.count : 0,
+          facebook: fbBroadcast.success ? 1 : 0
         };
-        if (fbResult.success) {
-          broadcastRecord.facebookPostId = fbResult.postId;
+
+        if (fbBroadcast.success) {
+          broadcastRecord.facebookPostId = fbBroadcast.postId;
         }
         break;
 
       default:
         return res.status(statusCodes.BAD_REQUEST).json({
           success: false,
-          msg: "Invalid broadcast type",
+          msg: "Invalid broadcast type"
         });
     }
 
-    // 5. Create In-App Notifications
+    // 6. Create In-App Notifications
     if (targetUsers.length > 0) {
       try {
-        const notificationResult = await notificationController.createBroadcastNotification({
+        await notificationController.createBroadcastNotification({
           body: {
             reportId: report._id,
-            recipients: targetUsers.map((user) => user._id),
+            recipients: targetUsers.map(user => user._id),
             broadcastType,
             scope,
             report: {
               type: report.type,
               location: report.location,
               status: report.status,
-              personInvolved: report.personInvolved,
-            },
+              personInvolved: report.personInvolved
+            }
           },
-          user: req.user,
+          user: req.user
         });
-
-        if (!notificationResult.success) {
-          console.error("Notification creation failed:", notificationResult.msg);
-        }
       } catch (error) {
         console.error("Notification error:", error);
       }
     }
 
-    // 6. Update Report & Save
+    // 7. Update Report & Save
     report.isPublished = true;
     report.broadcastHistory.push(broadcastRecord);
     await report.save();
 
+    // 8. Send Response
     res.status(statusCodes.OK).json({
       success: true,
       msg: "Report broadcast successfully",
       stats: {
         targetedUsers: targetUsers.length,
         deliveryStats: broadcastRecord.deliveryStats,
-        scope: scope,
+        scope: scope
       },
-      results: broadcastResults,
+      results: broadcastResults
     });
+
   } catch (error) {
     console.error("Broadcasting error:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: "Error broadcasting report",
-      error: error.message,
+      error: error.message
     });
   }
 });

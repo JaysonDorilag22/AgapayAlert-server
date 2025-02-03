@@ -154,43 +154,43 @@ const reportSchema = new mongoose.Schema(
     ],
 
     broadcastHistory: [
+  {
+    date: {
+      type: Date,
+      default: Date.now,
+    },
+    action: {
+      type: String,
+      enum: ["published", "unpublished"],
+    },
+    method: [
       {
-        date: {
-          type: Date,
-          default: Date.now,
-        },
-        action: {
-          type: String,
-          enum: ["published", "unpublished"],
-        },
-        method: [
-          {
-            type: String,
-            enum: ["Push Notification", "SMS", "Facebook Post"],
-          },
-        ],
-        publishedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-        },
-        facebookPostId: String, // Store Facebook post ID
-        notes: String,
-        scope: {
-          type: {
-            type: String,
-            enum: ["city", "radius", "all"],
-          },
-          city: String,
-          radius: Number,
-        },
-        targetedUsers: Number,
-        deliveryStats: {
-          push: Number,
-          sms: Number,
-          facebook: Number,
-        },
+        type: String,
+        enum: ["Push Notification", "Messenger", "Facebook Post"], 
       },
     ],
+    publishedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    facebookPostId: String,
+    notes: String,
+    scope: {
+      type: {
+        type: String,
+        enum: ["city", "radius", "all"],
+      },
+      city: String,
+      radius: Number,
+    },
+    targetedUsers: Number,
+    deliveryStats: {
+      push: Number,
+      messenger: Number, 
+      facebook: Number,
+    },
+  }
+],
 
   },
   { timestamps: true }

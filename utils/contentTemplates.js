@@ -1,22 +1,18 @@
-const { NOTIFICATION_SOUNDS } = require("../constants/alertSound");
 // Broadcast notification templates
 const broadcastTemplates = {
   report: (report) => ({
     title: `${report.type} Alert`,
-    message: `URGENT: Please help us locate
-      
-  Name: ${report.personInvolved.firstName} ${report.personInvolved.lastName}
-  Age: ${report.personInvolved.age}
-  Last Seen: ${new Date(
-    report.personInvolved.lastSeenDate
-  ).toLocaleDateString()} at ${report.personInvolved.lastSeentime}
-  Last Known Location: ${report.personInvolved.lastKnownLocation}
-  Address: ${report.location.address.streetAddress}, ${
-      report.location.address.barangay
-    }, ${report.location.address.city}`,
+    message: `URGENT: Please help us locate\n\nName: ${report.personInvolved.firstName} ${report.personInvolved.lastName}\nAge: ${report.personInvolved.age}\nLast Seen: ${new Date(report.personInvolved.lastSeenDate).toLocaleDateString()} at ${report.personInvolved.lastSeentime}`,
     image: report.personInvolved.mostRecentPhoto.url,
-    ios_sound: "alert.wav",
-    android_sound: "alert.wav",
+    data: {
+      reportId: report._id,
+      type: report.type
+    }
+  }),
+
+  messenger: (report) => ({
+    title: `${report.type} Alert`,
+    message: `🚨 URGENT ALERT 🚨\n\nName: ${report.personInvolved.firstName} ${report.personInvolved.lastName}\nAge: ${report.personInvolved.age}\nLast Seen: ${new Date(report.personInvolved.lastSeenDate).toLocaleDateString()} at ${report.personInvolved.lastSeentime}`
   }),
 
   facebook: (report) => ({
