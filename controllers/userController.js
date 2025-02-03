@@ -8,6 +8,7 @@ const uploadToCloudinary = require("../utils/uploadToCloudinary");
 const cloudinary = require("cloudinary").v2;
 const bcrypt = require("bcryptjs");
 const { getIO, SOCKET_EVENTS } = require("../utils/socketUtils");
+const { getCoordinatesFromAddress } = require("../utils/geocoding");
 
 // Get user details
 exports.getUserDetails = asyncHandler(async (req, res) => {
@@ -134,6 +135,15 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
       });
     }
 
+    // Get coordinates from address
+    const geoData = await getCoordinatesFromAddress(address);
+    if (!geoData.success) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: geoData.message
+      });
+    }
+
     // Handle avatar
     let avatar = {
       url: "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png",
@@ -190,14 +200,20 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
       }
     }
 
-    // Create user
+    // Create user with address location
     user = new User({
       firstName,
       lastName,
       number,
       email,
       password,
-      address,
+      address: {
+        ...address,
+        location: {
+          type: "Point",
+          coordinates: geoData.coordinates
+        }
+      },
       roles: [role],
       policeStation: policeStation ? policeStation._id : null,
       isVerified: true,
@@ -232,7 +248,10 @@ exports.getUsers = asyncHandler(async (req, res) => {
     const { role, city, policeStation, search, isActive, page = 1, limit = 10 } = req.query;
 
     const userRole = req.user.roles[0];
-    let query = {};
+    let query = {
+      // Only get police officers and admins
+      roles: { $in: ["police_officer", "police_admin"] }
+    };
 
     // Base query for search
     if (search) {
@@ -267,31 +286,16 @@ exports.getUsers = asyncHandler(async (req, res) => {
           "address.city": req.user.address.city,
         });
 
-        let cityQuery = {
-          $or: [
-            {
-              policeStation: {
-                $in: cityStations.map((station) => station._id),
-              },
-            },
-            {
-              roles: "city_admin",
-              "address.city": req.user.address.city,
-            },
-          ],
+        query.policeStation = {
+          $in: cityStations.map((station) => station._id)
         };
 
-        // Add filters
-        if (role) cityQuery.roles = role;
-        if (policeStation && cityStations.find((s) => s._id.toString() === policeStation)) {
-          cityQuery.policeStation = policeStation;
+        if (policeStation) {
+          query.policeStation = policeStation;
         }
-
-        query = { ...query, ...cityQuery };
         break;
 
       case "super_admin":
-        if (role) query.roles = role;
         if (city) query["address.city"] = city;
         if (policeStation) query.policeStation = policeStation;
         break;
@@ -312,6 +316,9 @@ exports.getUsers = asyncHandler(async (req, res) => {
       .limit(parseInt(limit));
 
     const total = await User.countDocuments(query);
+
+    console.log('Query:', query);
+    console.log('Total users found:', total);
 
     res.status(statusCodes.OK).json({
       success: true,
@@ -581,6 +588,91 @@ exports.getPoliceStationOfficers = asyncHandler(async (req, res) => {
       success: false,
       msg: "Error retrieving police station officers",
       error: error.message,
+    });
+  }
+});
+
+exports.updateLiveLocation = asyncHandler(async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { latitude, longitude } = req.body;
+
+    // Validate coordinates
+    if (!latitude || !longitude) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Latitude and longitude are required'
+      });
+    }
+
+    // Validate coordinate ranges
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Invalid coordinates'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: 'User not found'
+      });
+    }
+
+    // Update user's live location
+    user.liveLocation = {
+      type: 'Point',
+      coordinates: [longitude, latitude],
+      lastUpdated: new Date()
+    };
+
+    await user.save();
+
+    // Get Socket.IO instance
+    const io = getIO();
+
+    // Emit location update based on user role
+    switch (user.roles[0]) {
+      case 'police_officer':
+      case 'police_admin':
+        if (user.policeStation) {
+          io.to(`policeStation_${user.policeStation}`).emit('LOCATION_UPDATED', {
+            userId: user._id,
+            name: `${user.firstName} ${user.lastName}`,
+            role: user.roles[0],
+            location: user.liveLocation,
+            isOnDuty: user.isOnDuty
+          });
+        }
+        break;
+      
+      case 'city_admin':
+        io.to(`city_${user.address.city}`).emit('LOCATION_UPDATED', {
+          userId: user._id,
+          name: `${user.firstName} ${user.lastName}`,
+          role: user.roles[0],
+          location: user.liveLocation
+        });
+        break;
+    }
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: 'Live location updated successfully',
+      data: {
+        location: user.liveLocation,
+        lastUpdated: user.liveLocation.lastUpdated
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating live location:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error updating live location',
+      error: error.message
     });
   }
 });
