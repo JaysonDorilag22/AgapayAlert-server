@@ -21,6 +21,12 @@ exports.getUserDetails = asyncHandler(async (req, res) => {
   res.status(statusCodes.OK).json(user);
 });
 
+// Fetch all users
+exports.getAllUsers = asyncHandler(async (req, res) => {
+  const users = await User.find().select('-password');
+  res.status(statusCodes.OK).json(users);
+});
+
 // Update user details
 exports.updateUserDetails = asyncHandler(async (req, res) => {
   const { firstName, lastName, number, address, preferredNotifications } = req.body;

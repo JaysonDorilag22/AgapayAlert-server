@@ -191,7 +191,7 @@ exports.resendVerification = asyncHandler(async (req, res) => {
 });
 
 // Login with device token
-exports.login = asyncHandler(async (req, res) => {
+exports.logint = asyncHandler(async (req, res) => {
   try {
     const { email, password, deviceToken } = req.body;
     console.log('Login attempt with:', { email, deviceToken });
@@ -257,6 +257,93 @@ exports.login = asyncHandler(async (req, res) => {
     res.json({ 
       msg: 'Logged in successfully',
       user: {
+        ...user.toObject(),
+        deviceToken: user.deviceToken
+      }
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false, 
+      msg: 'Login failed',
+      error: error.message
+    });
+  }
+});
+
+//filtered login method web and mobile test
+// Login with device token
+exports.login = asyncHandler(async (req, res) => {
+  try {
+    const { email, password, deviceToken, platform } = req.body; // Add platform to request body
+    console.log('Login attempt with:', { email, deviceToken, platform });
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(statusCodes.BAD_REQUEST).json({ 
+        msg: errorMessages.USER_NOT_FOUND 
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(statusCodes.BAD_REQUEST).json({ 
+        msg: errorMessages.INVALID_CREDENTIALS 
+      });
+    }
+
+    if (!user.isVerified) {
+      return res.status(statusCodes.UNAUTHORIZED).json({
+        msg: errorMessages.EMAIL_NOT_VERIFIED,
+        email: user.email
+      });
+    }
+
+    // Update OneSignal player tags and save device token only for mobile platform
+    if ((platform !== 'web' || platform == null) && deviceToken) {
+      try {
+        await axios.put(
+          `https://onesignal.com/api/v1/players/${deviceToken}`,
+          {
+            app_id: process.env.ONESIGNAL_APP_ID,
+            tags: {
+              role: user.roles[0],
+              userId: user._id.toString()
+            }
+          },
+          {
+            headers: {
+              'Authorization': `Basic ${process.env.ONESIGNAL_API_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        user.deviceToken = deviceToken;
+        await user.save();
+        console.log('Updated player tags and device token:', { deviceToken, role: user.roles[0] });
+      } catch (oneSignalError) {
+        console.error('OneSignal update error:', oneSignalError);
+      }
+    }
+
+    const payload = {
+      user: {
+        id: user.id,
+        roles: user.roles,
+      }
+    };
+
+    const token = generateToken(payload, res);
+
+    console.log('Logged in successfully:', { email, platform, user: user.deviceToken, token: token });
+
+    res.json({ 
+      msg: 'Logged in successfully',
+      token,
+      user: {
+
         ...user.toObject(),
         deviceToken: user.deviceToken
       }
