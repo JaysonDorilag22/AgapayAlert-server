@@ -886,7 +886,7 @@ exports.assignOfficer = asyncHandler(async (req, res) => {
 
 exports.getPublicFeed = asyncHandler(async (req, res) => {
   try {
-    const { page = 1, limit = 10, city, type } = req.query;
+    const { page = 1, limit = 10, city, type, firstName, lastName, searchName } = req.query;
     const currentPage = parseInt(page);
     const limitPerPage = parseInt(limit);
 
@@ -910,7 +910,27 @@ exports.getPublicFeed = asyncHandler(async (req, res) => {
       query.type = type;
     }
 
+    // Add firstName filter if provided
+    if (firstName) {
+      query["personInvolved.firstName"] = new RegExp(firstName, 'i'); // Case-insensitive search
+    }
+
+    // Add lastName filter if provided
+    if (lastName) {
+      query["personInvolved.lastName"] = new RegExp(lastName, 'i'); // Case-insensitive search
+    }
+
+    // Add searchName filter if provided
+    if (searchName) {
+      query["$or"] = [
+        { "personInvolved.firstName": new RegExp(searchName, 'i') },
+        { "personInvolved.lastName": new RegExp(searchName, 'i') },
+        { $expr: { $regexMatch: { input: { $concat: ["$personInvolved.firstName", " ", "$personInvolved.lastName"] }, regex: searchName, options: "i" } } }
+      ];
+    }
+
     const reports = await Report.find(query)
+      .populate('reporter', 'firstName lastName avatar') // Populate reporter details
       .select({
         type: 1,
         "personInvolved.firstName": 1,
@@ -942,6 +962,10 @@ exports.getPublicFeed = asyncHandler(async (req, res) => {
       city: report.location.address.city,
       photo: report.personInvolved.mostRecentPhoto.url,
       reportedAt: report.createdAt,
+      reporter: {
+        name: `${report.reporter.firstName} ${report.reporter.lastName}`,
+        avatar: report.reporter.avatar.url,
+      },
     }));
 
     res.status(statusCodes.OK).json({

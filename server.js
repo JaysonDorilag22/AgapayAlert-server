@@ -1,15 +1,15 @@
-const express = require("express");
-const http = require("http");
-const cors = require("cors");
-const dotenv = require("dotenv");
-const cookieParser = require("cookie-parser");
-const session = require("express-session");
-const passport = require("./config/passportConfig");
-const path = require("path");
-const { initializeSocket } = require("./utils/socketUtils");
-const connectDB = require("./config/db");
-const errorHandler = require("./middlewares/errorHandler");
-const MongoStore = require("connect-mongo");
+const express = require('express');
+const http = require('http');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const cookieParser = require('cookie-parser');
+const session = require('express-session');
+const passport = require('./config/passportConfig');
+const path = require('path');
+const { initializeSocket } = require('./utils/socketUtils');
+const connectDB = require('./config/db');
+const errorHandler = require('./middlewares/errorHandler');
+const MongoStore = require('connect-mongo');
 // Route imports
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
@@ -40,11 +40,8 @@ connectDB();
 app.use(
   cors({
     origin: [
-      process.env.CLIENT_URL || "http://localhost:3000",
-      process.env.MOBILE_URL || "exp://192.168.1.1:19000",
-      "https://agapayalert-web.onrender.com",
-      "https://agapayalert-server.onrender.com",
-      "agapayalert://",
+        process.env.CLIENT_URL || "http://localhost:3000",
+        process.env.MOBILE_URL || "exp://192.168.1.1:19000"
     ],
     credentials: true,
   })
