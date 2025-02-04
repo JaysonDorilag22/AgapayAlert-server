@@ -102,7 +102,7 @@ exports.handlePostback = async (sender_psid, postback) => {
             elements: [{
               title: "AgapayAlert Services",
               subtitle: "Get real-time alerts about missing persons in your area",
-              image_url: "https://raw.githubusercontent.com/jay0927/AgapayAlert/main/frontend/src/assets/img/logo.png",
+              image_url: "https://agapayalert-web.onrender.com/assets/AGAPAYALERT%20-%20imagotype-CfBGhIL1.svg",
               buttons: [
                 {
                   type: "postback",
@@ -111,7 +111,7 @@ exports.handlePostback = async (sender_psid, postback) => {
                 },
                 {
                   type: "web_url",
-                  url: "https://jsond.onrender.com/",
+                  url: "https://agapayalert-web.onrender.com/",
                   title: "Visit Website"
                 }
               ]
