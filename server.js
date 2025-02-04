@@ -37,15 +37,29 @@ initializeSocket(server);
 connectDB();
 
 // Middleware
-app.use(
-  cors({
-    origin: [
-        process.env.CLIENT_URL || "http://localhost:3000",
-        process.env.MOBILE_URL || "exp://192.168.1.1:19000"
-    ],
-    credentials: true,
-  })
-);
+
+// CORS Configuration
+const allowedOrigins = [
+  process.env.CLIENT_URL || "http://localhost:3000",
+  process.env.MOBILE_URL || "exp://192.168.1.1:19000",
+  "https://agapayalert-web.onrender.com",
+  "https://agapayalert-server.onrender.com",
+  "agapayalert://"
+];
+
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  credentials: true,
+  maxAge: 86400 // 24 hours
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
