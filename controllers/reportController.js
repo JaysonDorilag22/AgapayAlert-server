@@ -1512,26 +1512,37 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
 // Add this new controller function
 exports.updateAllReportCaseIds = asyncHandler(async (req, res) => {
   try {
-    // Get all reports without caseId
-    const reports = await Report.find({ caseId: { $exists: false } });
+    // Get all reports, regardless of whether they have a caseId
+    const reports = await Report.find({});
     
     console.log(`Found ${reports.length} reports to update`);
+    
+    let updatedCount = 0;
     
     // Update each report
     for (const report of reports) {
       const prefix = report.type.substring(0, 3).toUpperCase();
-      report.caseId = `${prefix}-${report._id}`;
-      await report.save();
+      const idSuffix = report._id.toString().slice(-7);
+      const newCaseId = `${prefix}-${idSuffix}`;
+      
+      // Only update if the caseId is different
+      if (report.caseId !== newCaseId) {
+        report.caseId = newCaseId;
+        await report.save();
+        updatedCount++;
+      }
     }
 
     res.status(statusCodes.OK).json({
       success: true,
-      message: `Updated ${reports.length} reports with new case IDs`,
+      message: `Updated ${updatedCount} reports with new case IDs`,
       data: {
-        updatedCount: reports.length,
+        totalReports: reports.length,
+        updatedCount,
         examples: reports.slice(0, 5).map(r => ({
           id: r._id,
-          caseId: r.caseId,
+          oldCaseId: r.caseId,
+          newCaseId: `${r.type.substring(0, 3).toUpperCase()}-${r._id.toString().slice(-7)}`,
           type: r.type
         }))
       }
