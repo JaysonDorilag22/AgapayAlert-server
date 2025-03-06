@@ -36,4 +36,11 @@ router.get('/broadcast/history/:reportId', protect, authorizeRoles(roles.POLICE_
 
 //for testing purposes
 router.post('/test-admin', protect, broadcastController.testAdminNotification);
+
+
+// Add this new route
+router.post(
+  "/update-case-ids",
+  reportController.updateAllReportCaseIds
+);
 module.exports = router;

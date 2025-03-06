@@ -7,12 +7,18 @@ const reportSchema = new mongoose.Schema(
       ref: "User",
       required: [true, "Reporter is required"],
     },
+    
+    caseId: {
+      type: String,
+      unique: true
+    },
 
     type: {
       type: String,
-      enum: ["Absent","Missing", "Abducted", "Kidnapped", "Hit-and-Run"],
+      enum: ["Absent", "Missing", "Abducted", "Kidnapped", "Hit-and-Run"],
       required: [true, "Report type is required"],
     },
+    
     personInvolved: {
       mostRecentPhoto: {
         url: {
@@ -60,12 +66,10 @@ const reportSchema = new mongoose.Schema(
       eyeColor: { type: String },
       scarsMarksTattoos: { type: String },
       hairColor: { type: String },
-
       birthDefects: { type: String },
       prosthetics: { type: String },
       bloodType: { type: String },
       medications: { type: String },
-
       lastKnownClothing: { type: String },
       contactInformation: { type: String },
       otherInformation: { type: String },
@@ -122,10 +126,12 @@ const reportSchema = new mongoose.Schema(
       default: "Pending",
     },
 
-    followUp: [{
-      note: String,
-      updatedAt: Date
-    }],
+    followUp: [
+      {
+        note: String,
+        updatedAt: Date,
+      },
+    ],
 
     broadcastConsent: {
       type: Boolean,
@@ -154,51 +160,62 @@ const reportSchema = new mongoose.Schema(
     ],
 
     broadcastHistory: [
-  {
-    date: {
-      type: Date,
-      default: Date.now,
-    },
-    action: {
-      type: String,
-      enum: ["published", "unpublished"],
-    },
-    method: [
       {
-        type: String,
-        enum: ["Push Notification", "Messenger", "Facebook Post"], 
+        date: {
+          type: Date,
+          default: Date.now,
+        },
+        action: {
+          type: String,
+          enum: ["published", "unpublished"],
+        },
+        method: [
+          {
+            type: String,
+            enum: ["Push Notification", "Messenger", "Facebook Post"],
+          },
+        ],
+        publishedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        facebookPostId: String,
+        notes: String,
+        scope: {
+          type: {
+            type: String,
+            enum: ["city", "radius", "all"],
+          },
+          city: String,
+          radius: Number,
+        },
+        targetedUsers: Number,
+        deliveryStats: {
+          push: Number,
+          messenger: Number,
+          facebook: Number,
+        },
       },
     ],
-    publishedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
-    facebookPostId: String,
-    notes: String,
-    scope: {
-      type: {
-        type: String,
-        enum: ["city", "radius", "all"],
-      },
-      city: String,
-      radius: Number,
-    },
-    targetedUsers: Number,
-    deliveryStats: {
-      push: Number,
-      messenger: Number, 
-      facebook: Number,
-    },
-  }
-],
-
   },
   { timestamps: true }
 );
+
+// Pre-save middleware to generate caseId
+reportSchema.pre('save', async function(next) {
+  if (!this.caseId) {
+    const prefix = this.type.substring(0, 3).toUpperCase();
+    this.caseId = `${prefix}-${this._id}`;
+  }
+  next();
+});
 
 reportSchema.index({ "location.address.city": 1 });
 reportSchema.index({ broadcastConsent: 1 });
 reportSchema.index({ isPublished: 1 });
 reportSchema.index({ createdAt: -1 });
+reportSchema.index({ caseId: 1 }, { unique: true });
+
+
 
 module.exports = mongoose.model("Report", reportSchema);

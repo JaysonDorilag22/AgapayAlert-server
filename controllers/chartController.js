@@ -435,4 +435,196 @@ exports.getLocationHotspots = asyncHandler(async (req, res) => {
     }
   });
 
+  // Example API call
+// GET /api/charts/hotspots?barangay=Lahug&reportType=Missing&startDate=2023-01-01&endDate=2023-12-31&cityFilter=Cebu City
+
+
+//   exports.getLocationHotspots = asyncHandler(async (req, res) => {
+//     try {
+//       const { 
+//         barangay,
+//         reportType,
+//         startDate,
+//         endDate,
+//         cityFilter
+//       } = req.query;
+
+//       // Get base query from role
+//       let query = await getRoleBasedQuery(req.user);
+
+//       // Add filters to query
+//       if (barangay) {
+//         query['location.address.barangay'] = barangay;
+//       }
+
+//       if (reportType) {
+//         query.type = reportType;
+//       }
+
+//       if (cityFilter) {
+//         query['location.address.city'] = cityFilter;
+//       }
+
+//       // Date range filter
+//       if (startDate || endDate) {
+//         query.createdAt = {};
+//         if (startDate) {
+//           query.createdAt.$gte = new Date(startDate);
+//         }
+//         if (endDate) {
+//           query.createdAt.$lte = new Date(endDate);
+//         }
+//       }
+      
+//       // Get historical data by barangay and time
+//       const historicalData = await Report.aggregate([
+//         { $match: query },
+//         { 
+//           $group: {
+//             _id: {
+//               barangay: '$location.address.barangay',
+//               year: { $year: '$createdAt' },
+//               month: { $month: '$createdAt' },
+//               type: '$type'
+//             },
+//             count: { $sum: 1 },
+//             cases: {
+//               $push: {
+//                 type: '$type',
+//                 status: '$status',
+//                 createdAt: '$createdAt'
+//               }
+//             }
+//           }
+//         },
+//         { $sort: { '_id.year': 1, '_id.month': 1 } }
+//       ]);
+  
+//       // Process data for each barangay
+//       const barangayStats = {};
+//       historicalData.forEach(entry => {
+//         const barangay = entry._id.barangay;
+//         if (!barangayStats[barangay]) {
+//           barangayStats[barangay] = {
+//             totalIncidents: 0,
+//             monthlyData: [],
+//             trend: 0,
+//             caseTypes: {},
+//             monthlyBreakdown: []
+//           };
+//         }
+        
+//         barangayStats[barangay].totalIncidents += entry.count;
+//         barangayStats[barangay].monthlyData.push(entry.count);
+
+//         // Track case types
+//         entry.cases.forEach(case_ => {
+//           if (!barangayStats[barangay].caseTypes[case_.type]) {
+//             barangayStats[barangay].caseTypes[case_.type] = 0;
+//           }
+//           barangayStats[barangay].caseTypes[case_.type]++;
+//         });
+
+//         // Monthly breakdown
+//         barangayStats[barangay].monthlyBreakdown.push({
+//           year: entry._id.year,
+//           month: entry._id.month,
+//           count: entry.count,
+//           type: entry._id.type
+//         });
+//       });
+  
+//       // Calculate trends and predictions
+//       Object.keys(barangayStats).forEach(barangay => {
+//         const stats = barangayStats[barangay];
+//         const monthlyData = stats.monthlyData;
+        
+//         // Enhanced trend calculation with weighted recent months
+//         if (monthlyData.length > 1) {
+//           const n = monthlyData.length;
+//           let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+          
+//           monthlyData.forEach((count, index) => {
+//             // Give more weight to recent months
+//             const weight = Math.exp(index / n);
+//             sumX += index * weight;
+//             sumY += count * weight;
+//             sumXY += index * count * weight;
+//             sumXX += index * index * weight;
+//           });
+  
+//           const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+//           stats.trend = slope;
+  
+//           // Improved prediction using weighted average
+//           const recentMonths = monthlyData.slice(-3);
+//           const weightedAvg = recentMonths.reduce((acc, val, idx) => 
+//             acc + val * Math.exp(idx), 0) / recentMonths.length;
+          
+//           stats.prediction = Math.max(0, Math.round(
+//             weightedAvg + slope
+//           ));
+//         }
+  
+//         // Enhanced risk score calculation
+//         const maxIncidents = Math.max(...Object.values(barangayStats).map(s => s.totalIncidents));
+//         const trendFactor = stats.trend > 0 ? 1.2 : stats.trend < 0 ? 0.8 : 1;
+//         stats.riskScore = Math.round((stats.totalIncidents / maxIncidents) * 100 * trendFactor);
+//       });
+  
+//       // Sort barangays by risk score
+//       const sortedBarangays = Object.entries(barangayStats)
+//         .sort((a, b) => b[1].riskScore - a[1].riskScore)
+//         .slice(0, 10);
+  
+//       res.status(statusCodes.OK).json({
+//         success: true,
+//         data: {
+//           current: {
+//             labels: sortedBarangays.map(([barangay]) => barangay),
+//             datasets: [{
+//               label: 'Current Incidents',
+//               data: sortedBarangays.map(([_, stats]) => stats.totalIncidents),
+//               backgroundColor: '#36A2EB'
+//             }]
+//           },
+//           predictions: {
+//             labels: sortedBarangays.map(([barangay]) => barangay),
+//             datasets: [{
+//               label: 'Predicted Next Month',
+//               data: sortedBarangays.map(([_, stats]) => stats.prediction || 0),
+//               backgroundColor: '#FF6384'
+//             }]
+//           },
+//           analysis: sortedBarangays.map(([barangay, stats]) => ({
+//             barangay,
+//             currentIncidents: stats.totalIncidents,
+//             predictedNextMonth: stats.prediction || 0,
+//             riskScore: stats.riskScore,
+//             caseTypes: stats.caseTypes,
+//             monthlyBreakdown: stats.monthlyBreakdown,
+//             trend: stats.trend > 0 ? 'Increasing' : stats.trend < 0 ? 'Decreasing' : 'Stable',
+//             riskLevel: stats.riskScore >= 75 ? 'High' : stats.riskScore >= 50 ? 'Medium' : 'Low'
+//           })),
+//           filters: {
+//             appliedFilters: {
+//               barangay,
+//               reportType,
+//               startDate,
+//               endDate,
+//               cityFilter
+//             }
+//           }
+//         }
+//       });
+  
+//     } catch (error) {
+//       console.error('Error in getLocationHotspots:', error);
+//       res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//         success: false,
+//         error: error.message
+//       });
+//     }
+// });
+
 module.exports = exports;

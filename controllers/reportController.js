@@ -1506,3 +1506,43 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
     });
   }
 });
+
+
+
+// Add this new controller function
+exports.updateAllReportCaseIds = asyncHandler(async (req, res) => {
+  try {
+    // Get all reports without caseId
+    const reports = await Report.find({ caseId: { $exists: false } });
+    
+    console.log(`Found ${reports.length} reports to update`);
+    
+    // Update each report
+    for (const report of reports) {
+      const prefix = report.type.substring(0, 3).toUpperCase();
+      report.caseId = `${prefix}-${report._id}`;
+      await report.save();
+    }
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      message: `Updated ${reports.length} reports with new case IDs`,
+      data: {
+        updatedCount: reports.length,
+        examples: reports.slice(0, 5).map(r => ({
+          id: r._id,
+          caseId: r.caseId,
+          type: r.type
+        }))
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating report case IDs:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: 'Error updating report case IDs',
+      error: error.message
+    });
+  }
+});

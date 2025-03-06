@@ -8,6 +8,10 @@ const UserSchema = new mongoose.Schema(
       required: [true, 'First name is required'],
       trim: true,
     },
+    middleName: {
+      type: String,
+      required: false,
+    },
     lastName: {
       type: String,
       required: [true, 'Last name is required'],
@@ -78,6 +82,8 @@ const UserSchema = new mongoose.Schema(
         }
       }
     },
+
+    //POLICE OFFICER FIELDS
     policeStation: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'PoliceStation',
@@ -89,7 +95,7 @@ const UserSchema = new mongoose.Schema(
     dutyHistory: [{
       startTime: Date,
       endTime: Date,
-      duration: Number // in hours
+      duration: Number 
     }],
     lastDutyChange: {
       type: Date,
@@ -120,7 +126,7 @@ const UserSchema = new mongoose.Schema(
     unique: true,
     sparse: true 
   },
-    preferredNotifications: {
+    preferredNotifications: { 
       sms: {
         type: Boolean,
         default: false,
