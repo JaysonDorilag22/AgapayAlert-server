@@ -11,58 +11,61 @@ dotenv.config();
 
 // Scan license plate from image
 exports.scanPlate = asyncHandler(async (req, res) => {
-    try {
-      const { reportId } = req.body;
-  
-      if (!req.file) {
-        return res.status(statusCodes.BAD_REQUEST).json({
-          success: false,
-          msg: 'No image provided'
-        });
-      }
-  
-      // Image validation
-      const allowedTypes = ['image/jpeg', 'image/png'];
-      if (!allowedTypes.includes(req.file.mimetype)) {
-        return res.status(statusCodes.BAD_REQUEST).json({
-          success: false,
-          msg: 'Invalid file type. Only JPEG and PNG allowed'
-        });
-      }
-  
-      // First call PlateRecognizer API with actual file
-      const formData = new FormData();
-      formData.append('upload', fs.createReadStream(req.file.path));
-  
-      const response = await axios.post('https://api.platerecognizer.com/v1/plate-reader/', 
-        formData,
-        {
-          headers: {
-            'Authorization': `Token ${process.env.ALPR_TOKEN}`,
-            ...formData.getHeaders()
-          }
-        }
-      );
-  
-      // Then upload to Cloudinary
-      const result = await cloudinary.uploader.upload(req.file.path, {
-        folder: 'alpr_images'
+  try {
+    const { reportId } = req.body;
+
+    if (!req.file) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'No image provided'
       });
-  
-      // Clean up temp file
-      fs.unlinkSync(req.file.path);
-  
-      const plateData = response.data.results[0];
-      if (!plateData) {
-        await cloudinary.uploader.destroy(result.public_id);
-        return res.status(statusCodes.BAD_REQUEST).json({
-          success: false,
-          msg: 'No license plate detected'
-        });
+    }
+
+    // Image validation
+    const allowedTypes = ['image/jpeg', 'image/png'];
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Invalid file type. Only JPEG and PNG allowed'
+      });
+    }
+
+    // Call PlateRecognizer API with additional parameters
+    const formData = new FormData();
+    formData.append('upload', fs.createReadStream(req.file.path));
+    formData.append('mmc', 'true'); // Enable make, model, color detection
+    formData.append('box_vehicles', 'true'); // Enable vehicle box detection
+    
+    const response = await axios.post('https://api.platerecognizer.com/v1/plate-reader/', 
+      formData,
+      {
+        headers: {
+          'Authorization': `Token ${process.env.ALPR_TOKEN}`,
+          ...formData.getHeaders()
+        }
       }
-  
-      // Create ALPR record
-      const alprRecord = await ALPR.create({
+    );
+
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: 'alpr_images'
+    });
+
+    // Clean up temp file
+    fs.unlinkSync(req.file.path);
+
+    const plates = response.data.results;
+    if (!plates || plates.length === 0) {
+      await cloudinary.uploader.destroy(result.public_id);
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'No license plates detected'
+      });
+    }
+
+    // Create ALPR records for each detected plate
+    const alprRecords = await Promise.all(plates.map(async plateData => {
+      return await ALPR.create({
         plateNumber: plateData.plate,
         linkedReport: reportId || null,
         image: {
@@ -79,7 +82,16 @@ exports.scanPlate = asyncHandler(async (req, res) => {
           },
           vehicle: {
             type: plateData.vehicle?.type || '',
-            score: plateData.vehicle?.score || 0
+            score: plateData.vehicle?.score || 0,
+            box: plateData.vehicle?.box || null,
+            color: {
+              primary: plateData.vehicle?.color?.[0] || '',
+              secondary: plateData.vehicle?.color?.[1] || ''
+            },
+            make: plateData.vehicle?.make?.[0]?.name || '',
+            makeConfidence: plateData.vehicle?.make?.[0]?.score || 0,
+            model: plateData.vehicle?.model?.[0]?.name || '',
+            modelConfidence: plateData.vehicle?.model?.[0]?.score || 0
           },
           region: {
             code: plateData.region?.code || '',
@@ -89,21 +101,31 @@ exports.scanPlate = asyncHandler(async (req, res) => {
         candidates: plateData.candidates || [],
         source: 'image'
       });
-  
-      res.status(statusCodes.CREATED).json({
-        success: true,
-        data: alprRecord
-      });
-  
-    } catch (error) {
-      console.error('ALPR Error:', error);
-      res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
-        success: false,
-        msg: 'Error processing license plate',
-        error: error.message
-      });
-    }
-  });
+    }));
+
+     // Log saved database records
+     console.log('\n=== Saved ALPR Records ===\n', 
+      JSON.stringify(alprRecords, null, 2)
+    );
+
+    res.status(statusCodes.CREATED).json({
+      success: true,
+      data: {
+        totalPlates: alprRecords.length,
+        records: alprRecords,
+        imageUrl: result.secure_url
+      }
+    });
+
+  } catch (error) {
+    console.error('ALPR Error:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error processing license plate',
+      error: error.message
+    });
+  }
+});
   
 // Get all scans with pagination and filters
 exports.getAllScans = asyncHandler(async (req, res) => {
@@ -230,6 +252,63 @@ exports.deleteScan = asyncHandler(async (req, res) => {
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: 'Error deleting scan',
+      error: error.message
+    });
+  }
+});
+
+exports.testScan = asyncHandler(async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'No image provided'
+      });
+    }
+
+    // Image validation
+    const allowedTypes = ['image/jpeg', 'image/png'];
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Invalid file type. Only JPEG and PNG allowed'
+      });
+    }
+
+    // Call PlateRecognizer API with additional parameters
+    const formData = new FormData();
+    formData.append('upload', fs.createReadStream(req.file.path));
+    formData.append('mmc', 'true'); // Enable make, model, color detection
+    formData.append('box_vehicles', 'true'); // Enable vehicle box detection
+    
+    const response = await axios.post('https://api.platerecognizer.com/v1/plate-reader/', 
+      formData,
+      {
+        headers: {
+          'Authorization': `Token ${process.env.ALPR_TOKEN}`,
+          ...formData.getHeaders()
+        }
+      }
+    );
+
+    // Clean up temp file
+    fs.unlinkSync(req.file.path);
+
+    // Log and return raw API response
+    console.log('\n=== Raw PlateRecognizer API Response ===\n', 
+      JSON.stringify(response.data, null, 2)
+    );
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: response.data
+    });
+
+  } catch (error) {
+    console.error('ALPR Test Error:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error testing license plate scan',
       error: error.message
     });
   }

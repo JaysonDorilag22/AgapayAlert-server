@@ -10,9 +10,7 @@ const { notifyPoliceStation } = require("../utils/notificationUtils");
 const cloudinary = require("cloudinary").v2;
 const { getCoordinatesFromAddress } = require("../utils/geocoding");
 const { sendOneSignalNotification } = require("../utils/notificationUtils");
-const {
-  isLastSeenMoreThan24Hours,
-} = require("../utils/isLastSeenMoreThan24Hours");
+const { isLastSeenMoreThan24Hours } = require("../utils/isLastSeenMoreThan24Hours");
 const { getIO, SOCKET_EVENTS } = require("../utils/socketUtils");
 
 // Helper function to find police station
@@ -238,6 +236,285 @@ exports.createReport = asyncHandler(async (req, res) => {
     });
   }
 });
+
+//create report v2
+// exports.createReport = asyncHandler(async (req, res) => {
+//   try {
+//     let { type, personInvolved, location, selectedPoliceStation } = req.body;
+
+//     // Automatically handle Missing/Absent classification
+//     if (type === "Missing" || type === "Absent") {
+//       const timeCheck = isLastSeenMoreThan24Hours(
+//         personInvolved.lastSeenDate,
+//         personInvolved.lastSeentime
+//       );
+//       type = timeCheck.isMoreThan24Hours ? "Missing" : "Absent";
+//     }
+
+//     const broadcastConsent = req.body.broadcastConsent === "true";
+
+//     // Validate input
+//     if (!type || !personInvolved || !location || typeof broadcastConsent !== "boolean") {
+//       return res.status(statusCodes.BAD_REQUEST).json({
+//         success: false,
+//         msg: "Missing required fields or invalid broadcast consent",
+//       });
+//     }
+
+//     // Get coordinates from address
+//     const geoData = await getCoordinatesFromAddress(location.address);
+//     if (!geoData.success) {
+//       return res.status(statusCodes.BAD_REQUEST).json({
+//         success: false,
+//         msg: geoData.message,
+//       });
+//     }
+
+//     // Handle photo upload
+//     if (!req.files?.["personInvolved[mostRecentPhoto]"]) {
+//       return res.status(statusCodes.BAD_REQUEST).json({
+//         success: false,
+//         msg: "Most recent photo is required",
+//       });
+//     }
+
+//     const photoFile = req.files["personInvolved[mostRecentPhoto]"][0];
+//     const photoResult = await uploadToCloudinary(photoFile.path, "reports");
+
+//     // Handle additional images
+//     let additionalImages = [];
+//     if (req.files?.additionalImages) {
+//       const uploadPromises = req.files.additionalImages.map((file) =>
+//         uploadToCloudinary(file.path, "reports")
+//       );
+//       const uploadResults = await Promise.all(uploadPromises);
+//       additionalImages = uploadResults.map((result) => ({
+//         url: result.url,
+//         public_id: result.public_id,
+//       }));
+//     }
+
+//     // Handle video upload
+//     let video = null;
+//     if (req.files?.video) {
+//       const videoFile = req.files.video[0];
+//       const videoResult = await uploadToCloudinary(
+//         videoFile.path, 
+//         "report_videos", 
+//         "video"
+//       );
+//       video = {
+//         url: videoResult.url,
+//         public_id: videoResult.public_id
+//       };
+//     }
+
+//     // Find police station
+//     let assignedStation = await findPoliceStation(selectedPoliceStation, geoData.coordinates);
+//     if (!assignedStation) {
+//       return res.status(statusCodes.NOT_FOUND).json({
+//         success: false,
+//         msg: "No police stations found in the system",
+//       });
+//     }
+
+//     // Find available officers
+//     const availableOfficers = await User.find({
+//       policeStation: assignedStation._id,
+//       roles: 'police_officer',
+//       isOnDuty: true
+//     }).populate({
+//       path: 'assignedCases',
+//       match: { status: { $ne: 'Resolved' } }
+//     });
+
+//     // Filter officers with less than 3 active cases
+//     const eligibleOfficers = availableOfficers.filter(officer => 
+//       officer.assignedCases?.length < 3
+//     );
+
+//     // Find nearest officer
+//     let nearestOfficer = null;
+//     if (eligibleOfficers.length > 0) {
+//       nearestOfficer = eligibleOfficers.reduce((nearest, officer) => {
+//         if (!officer.location?.coordinates) return nearest;
+        
+//         const distance = calculateDistance(
+//           geoData.coordinates,
+//           officer.location.coordinates
+//         );
+
+//         if (!nearest || distance < nearest.distance) {
+//           return { officer, distance };
+//         }
+//         return nearest;
+//       }, null);
+//     }
+
+//     // Create report
+//     const report = new Report({
+//       reporter: req.user.id,
+//       type,
+//       personInvolved: {
+//         ...personInvolved,
+//         mostRecentPhoto: {
+//           url: photoResult.url,
+//           public_id: photoResult.public_id,
+//         },
+//       },
+//       additionalImages,
+//       video,
+//       location: {
+//         type: "Point",
+//         coordinates: geoData.coordinates,
+//         address: location.address,
+//       },
+//       assignedPoliceStation: assignedStation._id,
+//       broadcastConsent,
+//       consentUpdateHistory: [
+//         {
+//           previousValue: false,
+//           newValue: broadcastConsent,
+//           updatedBy: req.user.id,
+//           date: new Date(),
+//         },
+//       ],
+//     });
+
+//     await report.save();
+
+//     // Generate case ID after save
+//     const prefix = report.type.substring(0, 3).toUpperCase();
+//     const idSuffix = report._id.toString().slice(-7);
+//     report.caseId = `${prefix}-${idSuffix}`;
+//     await report.save();
+
+//     // Prepare notifications
+//     const notificationPromises = [];
+
+//     // Notify eligible officers
+//     eligibleOfficers.forEach(officer => {
+//       if (officer.deviceToken) {
+//         notificationPromises.push(
+//           Notification.create({
+//             recipient: officer._id,
+//             type: 'NEW_CASE_AVAILABLE',
+//             title: `New ${type} Case Alert`,
+//             message: nearestOfficer?.officer._id.equals(officer._id)
+//               ? `You are the nearest officer to a new ${type} case`
+//               : `New ${type} case assigned to your station`,
+//             data: {
+//               reportId: report._id,
+//               caseId: report.caseId,
+//               type: report.type,
+//               isNearestOfficer: nearestOfficer?.officer._id.equals(officer._id)
+//             }
+//           })
+//         );
+
+//         notificationPromises.push(
+//           sendOneSignalNotification({
+//             include_player_ids: [officer.deviceToken],
+//             headings: { en: `New ${type} Case Alert` },
+//             contents: { 
+//               en: nearestOfficer?.officer._id.equals(officer._id)
+//                 ? `You are the nearest officer to a new ${type} case`
+//                 : `New ${type} case assigned to your station`
+//             },
+//             data: {
+//               type: 'NEW_CASE_AVAILABLE',
+//               reportId: report._id,
+//               caseId: report.caseId,
+//               isNearestOfficer: nearestOfficer?.officer._id.equals(officer._id)
+//             }
+//           })
+//         );
+//       }
+//     });
+
+//     // Notify reporter
+//     notificationPromises.push(
+//       Notification.create({
+//         recipient: req.user.id,
+//         type: "REPORT_CREATED",
+//         title: "Report Created",
+//         message: `Your ${type} report (Case ID: ${report.caseId}) has been created and assigned to ${assignedStation.name}`,
+//         data: {
+//           reportId: report._id,
+//           caseId: report.caseId
+//         },
+//       })
+//     );
+
+//     // Send all notifications
+//     try {
+//       await Promise.all(notificationPromises);
+//     } catch (notificationError) {
+//       console.error("Notification failed:", notificationError);
+//     }
+
+//     // Get populated report for socket emission
+//     const populatedReport = await Report.findById(report._id)
+//       .populate("reporter", "firstName lastName")
+//       .populate("assignedPoliceStation", "name address")
+//       .select({
+//         type: 1,
+//         caseId: 1,
+//         personInvolved: 1,
+//         location: 1,
+//         status: 1,
+//         createdAt: 1,
+//       });
+
+//     // Emit socket events
+//     const io = getIO();
+
+//     // Emit to police station room
+//     io.to(`policeStation_${assignedStation._id}`).emit(SOCKET_EVENTS.NEW_REPORT, {
+//       report: populatedReport,
+//       message: `New ${type} report assigned to your station`,
+//       eligibleOfficers: eligibleOfficers.map(o => ({
+//         id: o._id,
+//         name: `${o.firstName} ${o.lastName}`,
+//         activeCases: o.assignedCases?.length || 0,
+//         isNearest: nearestOfficer?.officer._id.equals(o._id)
+//       }))
+//     });
+
+//     // Emit to city admin room
+//     io.to(`city_${location.address.city}`).emit(SOCKET_EVENTS.NEW_REPORT, {
+//       report: populatedReport,
+//       message: `New ${type} report in your city`
+//     });
+
+//     res.status(statusCodes.CREATED).json({
+//       success: true,
+//       msg: "Report created successfully",
+//       data: {
+//         report: {
+//           ...report.toObject(),
+//           caseId: report.caseId
+//         },
+//         assignedStation,
+//         eligibleOfficers: eligibleOfficers.map(o => ({
+//           id: o._id,
+//           name: `${o.firstName} ${o.lastName}`,
+//           activeCases: o.assignedCases?.length || 0,
+//           isNearest: nearestOfficer?.officer._id.equals(o._id)
+//         })),
+//         assignmentType: selectedPoliceStation ? "Manual Selection" : "Automatic Assignment",
+//       },
+//     });
+
+//   } catch (error) {
+//     console.error("Error in createReport:", error);
+//     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//       success: false,
+//       msg: "Error creating report",
+//       error: error.message,
+//     });
+//   }
+// });
 
 // Update a report when it's still pending
 exports.updateReport = asyncHandler(async (req, res) => {

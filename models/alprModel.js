@@ -1,52 +1,71 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-const alprSchema = new mongoose.Schema({
-  plateNumber: {
-    type: String,
-    required: true,
-    uppercase: true
-  },
-  linkedReport: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Report'
-  },
-  image: {
-    url: String,
-    public_id: String
-  },
-  scanResults: {
-    confidence: Number,
-    box: {
-      xMin: Number,
-      yMin: Number,
-      xMax: Number,
-      yMax: Number
+const alprSchema = new mongoose.Schema(
+  {
+    plateNumber: {
+      type: String,
+      required: true,
+      uppercase: true,
     },
-    vehicle: {
-      type: { type: String },
-      score: Number
+    linkedReport: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Report",
     },
-    region: {
-      code: String,
-      score: Number
-    }
+    image: {
+      url: String,
+      public_id: String,
+    },
+    scanResults: {
+      confidence: Number,
+      box: {
+        xMin: Number,
+        yMin: Number,
+        xMax: Number,
+        yMax: Number,
+      },
+      vehicle: {
+        type: { type: String },
+        score: Number,
+        box: {
+          xMin: Number,
+          yMin: Number,
+          xMax: Number,
+          yMax: Number,
+        },
+        color: {
+          primary: String,
+          secondary: String,
+        },
+        make: String,
+        makeConfidence: Number,
+        model: String,
+        modelConfidence: Number,
+      },
+      region: {
+        code: String,
+        score: Number,
+      },
+    },
+    candidates: [
+      {
+        plate: String,
+        score: Number,
+      },
+    ],
+    source: {
+      type: String,
+      default: "image",
+    },
   },
-  candidates: [{
-    plate: String,
-    score: Number
-  }],
-  source: {
-    type: String,
-    default: 'image'
+  {
+    timestamps: true,
   }
-}, {
-  timestamps: true
-});
+);
 
-module.exports = mongoose.model('ALPR', alprSchema);
+module.exports = mongoose.model("ALPR", alprSchema);
 // Indexes
 alprSchema.index({ plateNumber: 1 });
 alprSchema.index({ createdAt: -1 });
 alprSchema.index({ "scanResults.confidence": -1 });
 
-module.exports = mongoose.model('ALPR', alprSchema);
+module.exports = mongoose.model("ALPR", alprSchema);

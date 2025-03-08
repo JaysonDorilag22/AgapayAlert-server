@@ -100,7 +100,7 @@ app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/report", reportRoutes);
 app.use("/api/v1/city", cityRoutes);
 app.use("/api/v1/police-station", policeStationRoutes);
-app.use("/api/v1/report-finder", finderReportRoutes);
+app.use("/api/v1/finder", finderReportRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/charts", chartRoutes);
 app.use("/api/v1/alpr", alprRoutes);

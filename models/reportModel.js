@@ -7,18 +7,15 @@ const reportSchema = new mongoose.Schema(
       ref: "User",
       required: [true, "Reporter is required"],
     },
-    
     caseId: {
       type: String,
       unique: true
     },
-
     type: {
       type: String,
       enum: ["Absent", "Missing", "Abducted", "Kidnapped", "Hit-and-Run"],
       required: [true, "Report type is required"],
     },
-    
     personInvolved: {
       mostRecentPhoto: {
         url: {
@@ -87,6 +84,15 @@ const reportSchema = new mongoose.Schema(
         },
       },
     ],
+
+    video: {
+      url: {
+        type: String,
+      },
+      public_id: {
+        type: String,
+      }
+    },
 
     location: {
       type: {
