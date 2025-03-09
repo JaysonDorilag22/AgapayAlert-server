@@ -29,6 +29,8 @@ router.get('/user-reports', protect, reportController.getUserReports);
 router.get('/user-report/:reportId', protect, reportController.getUserReportDetails);
 router.get('/search', protect, authorizeRoles( roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role, roles.SUPER_ADMIN.role ), reportController.searchReports);
 
+router.get('/public-search', reportController.searchPublicReports)
+
 // Broadcast routes
 router.post('/broadcast/publish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role), broadcastController.publishReport);
 router.post('/broadcast/unpublish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role), broadcastController.unpublishReport);

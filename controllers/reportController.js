@@ -1834,3 +1834,116 @@ exports.updateAllReportCaseIds = asyncHandler(async (req, res) => {
     });
   }
 });
+
+
+// Search Reports (Public)
+exports.searchPublicReports = asyncHandler(async (req, res) => {
+  try {
+    const { searchQuery, page = 1, limit = 10, city } = req.query;
+    const currentPage = parseInt(page);
+    const limitPerPage = parseInt(limit);
+
+    // Base query - only published & consented reports
+    let query = {
+      broadcastConsent: true,
+      isPublished: true,
+      status: { $ne: "Resolved" }
+    };
+
+    // Add search conditions if searchQuery exists 
+    if (searchQuery) {
+      const searchTerms = searchQuery.trim().split(" ").filter(term => term.length > 0);
+      
+      query.$or = [
+        // Name searches (partial matches, case insensitive)
+        { "personInvolved.firstName": { $regex: searchQuery, $options: "i" } },
+        { "personInvolved.lastName": { $regex: searchQuery, $options: "i" } },
+        
+        // Location searches
+        { "location.address.streetAddress": { $regex: searchQuery, $options: "i" } },
+        { "location.address.barangay": { $regex: searchQuery, $options: "i" } },
+        { "location.address.city": { $regex: searchQuery, $options: "i" } },
+        
+        // Type search
+        { type: { $regex: searchQuery, $options: "i" } }
+      ];
+
+      // Add full name search for multiple terms
+      if (searchTerms.length > 1) {
+        query.$or.push(
+          // First term as first name, second as last name
+          {
+            $and: [
+              { "personInvolved.firstName": { $regex: searchTerms[0], $options: "i" } },
+              { "personInvolved.lastName": { $regex: searchTerms[1], $options: "i" } }
+            ]
+          },
+          // First term as last name, second as first name
+          {
+            $and: [
+              { "personInvolved.firstName": { $regex: searchTerms[1], $options: "i" } },
+              { "personInvolved.lastName": { $regex: searchTerms[0], $options: "i" } }
+            ]
+          }
+        );
+      }
+    }
+
+    // Add city filter if provided
+    if (city) {
+      query["location.address.city"] = { $regex: new RegExp(city, "i") };
+    }
+
+    // Execute search with pagination
+    const reports = await Report.find(query)
+      .select({
+        type: 1,
+        personInvolved: {
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          lastSeenDate: 1,
+          lastSeentime: 1,
+          mostRecentPhoto: 1
+        },
+        location: 1,
+        createdAt: 1
+      })
+      .sort("-createdAt")
+      .skip((currentPage - 1) * limitPerPage)
+      .limit(limitPerPage);
+
+    const total = await Report.countDocuments(query);
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        reports: reports.map(report => ({
+          id: report._id,
+          type: report.type,
+          personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+          age: report.personInvolved.age,
+          lastSeen: {
+            date: report.personInvolved.lastSeenDate,
+            time: report.personInvolved.lastSeentime
+          },
+          location: report.location.address,
+          photo: report.personInvolved.mostRecentPhoto.url,
+          reportedAt: report.createdAt
+        })),
+        currentPage,
+        totalPages: Math.ceil(total / limitPerPage),
+        totalResults: total,
+        hasMore: currentPage * limitPerPage < total
+      }
+    });
+
+  } catch (error) {
+    console.error("Search error:", error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false, 
+      msg: "Error searching reports",
+      error: error.message
+    });
+  }
+});
