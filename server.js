@@ -22,6 +22,7 @@ const chartRoutes = require("./routes/chartRoutes");
 const alprRoutes = require("./routes/alprRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
 const messengerRoutes = require("./routes/messengerRoutes");
+const emergencyContactRoutes = require("./routes/emergencyContactRoutes");
 const { initializeMessenger } = require("./controllers/messengerController");
 // Load env vars
 dotenv.config();
@@ -106,6 +107,7 @@ app.use("/api/v1/charts", chartRoutes);
 app.use("/api/v1/alpr", alprRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
 app.use("/api/messenger", messengerRoutes);
+app.use("/api/emergency-contact", emergencyContactRoutes)
 // Error handling
 app.use(errorHandler);
 
