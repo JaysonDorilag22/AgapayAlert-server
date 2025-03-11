@@ -11,7 +11,9 @@ router.get('/nearest', emergencyContactController.getNearestEmergencyContacts);
 router.get('/:contactId', emergencyContactController.getEmergencyContactById);
 
 // Protected routes - only authorized users can modify data
-router.post('/', protect, authorizeRoles(roles.SUPER_ADMIN.role, roles.CITY_ADMIN.role), emergencyContactController.createEmergencyContact);
+router.post('/create',  emergencyContactController.createEmergencyContact);
+// router.post('/create', protect, authorizeRoles(roles.SUPER_ADMIN.role, roles.CITY_ADMIN.role), emergencyContactController.createEmergencyContact);
+
 router.put('/:contactId', protect, authorizeRoles(roles.SUPER_ADMIN.role, roles.CITY_ADMIN.role), emergencyContactController.updateEmergencyContact);
 router.delete('/:contactId', protect, authorizeRoles(roles.SUPER_ADMIN.role, roles.CITY_ADMIN.role), emergencyContactController.deleteEmergencyContact);
 

@@ -107,7 +107,7 @@ app.use("/api/v1/charts", chartRoutes);
 app.use("/api/v1/alpr", alprRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
 app.use("/api/messenger", messengerRoutes);
-app.use("/api/emergency-contact", emergencyContactRoutes)
+app.use("/api/v1/emergency-contacts", emergencyContactRoutes)
 // Error handling
 app.use(errorHandler);
 
