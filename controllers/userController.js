@@ -119,20 +119,6 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
     const creatorRole = req.user.roles[0];
     const file = req.file;
 
-    // Validate allowed role creation based on creator's role
-    const allowedRoles = {
-      police_admin: ["police_officer"],
-      city_admin: ["police_admin", "police_officer"],
-      super_admin: ["city_admin", "police_admin", "police_officer"],
-    };
-
-    if (!allowedRoles[creatorRole]?.includes(role)) {
-      return res.status(statusCodes.FORBIDDEN).json({
-        success: false,
-        msg: `${creatorRole} cannot create ${role} accounts`,
-      });
-    }
-
     // Check if user already exists
     let user = await User.findOne({ email });
     if (user) {

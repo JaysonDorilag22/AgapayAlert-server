@@ -853,6 +853,109 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
 });
 
 // Get Reports (with filters)
+// exports.getReports = asyncHandler(async (req, res) => {
+//   try {
+//     const {
+//       status,
+//       type,
+//       startDate,
+//       endDate,
+//       page = 1,
+//       limit = 10,
+//     } = req.query;
+//     let query = {};
+//     let sortOptions = { createdAt: -1 };  // Default sort by newest first
+
+//     // Apply filters regardless of role
+//     if (status) query.status = status;
+//     if (type) query.type = type;
+//     if (startDate && endDate) {
+//       query.createdAt = {
+//         $gte: new Date(startDate),
+//         $lte: new Date(endDate),
+//       };
+//     }
+
+//     // Role-based access control
+//     switch (req.user.roles[0]) {
+//       case "police_officer":
+//       case "police_admin":
+//         // Check if user has an assigned police station
+//         if (!req.user.policeStation) {
+//           return res.status(statusCodes.BAD_REQUEST).json({
+//             success: false,
+//             msg: "Officer/Admin must be assigned to a police station",
+//           });
+//         }
+        
+//         // No filter on query - they can see ALL reports from ALL stations
+//         // But we'll sort to prioritize reports from their station
+//         sortOptions = {
+//           // This creates a field that's -1 if it's their station, 1 otherwise (for sorting)
+//           isOwnStation: {
+//             $cond: [
+//               { $eq: ["$assignedPoliceStation", req.user.policeStation] },
+//               -1,  // Their station first
+//               1
+//             ]
+//           },
+//           createdAt: -1 // Then by date
+//         };
+//         break;
+
+//       case "city_admin":
+//         // Get all stations in the admin's city
+//         const cityStations = await PoliceStation.find({
+//           "address.city": req.user.address.city,
+//         });
+//         query.assignedPoliceStation = {
+//           $in: cityStations.map((station) => station._id),
+//         };
+//         break;
+
+//       case "super_admin":
+//         // Can see all reports
+//         break;
+
+//       default:
+//         return res.status(statusCodes.FORBIDDEN).json({
+//           success: false,
+//           msg: "Not authorized to view reports",
+//         });
+//     }
+
+//     // Get paginated reports with appropriate sorting
+//     const reports = await Report.find(query)
+//       .populate("reporter", "-password")
+//       .populate("assignedPoliceStation")
+//       .populate("assignedOfficer", "firstName lastName number email")
+//       .sort(sortOptions)
+//       .skip((page - 1) * limit)
+//       .limit(limit);
+
+//     const total = await Report.countDocuments(query);
+
+//     res.status(statusCodes.OK).json({
+//       success: true,
+//       data: {
+//         reports,
+//         currentPage: page,
+//         totalPages: Math.ceil(total / limit),
+//         totalReports: total,
+//         hasMore: page * limit < total,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error getting reports:", error);
+//     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//       success: false,
+//       msg: "Error retrieving reports",
+//       error: error.message,
+//     });
+//   }
+// });
+
+// Get Reports (with filters)
 exports.getReports = asyncHandler(async (req, res) => {
   try {
     const {
@@ -864,43 +967,9 @@ exports.getReports = asyncHandler(async (req, res) => {
       limit = 10,
     } = req.query;
     let query = {};
+    let sortOptions = { createdAt: -1 };  // Default sort by newest first
 
-    // Role-based filtering
-    switch (req.user.roles[0]) {
-      case "police_officer":
-      case "police_admin":
-        // Only see reports assigned to their police station
-        if (!req.user.policeStation) {
-          return res.status(statusCodes.BAD_REQUEST).json({
-            success: false,
-            msg: "Officer/Admin must be assigned to a police station",
-          });
-        }
-        query.assignedPoliceStation = req.user.policeStation;
-        break;
-
-      case "city_admin":
-        // Get all stations in the admin's city
-        const cityStations = await PoliceStation.find({
-          "address.city": req.user.address.city,
-        });
-        query.assignedPoliceStation = {
-          $in: cityStations.map((station) => station._id),
-        };
-        break;
-
-      case "super_admin":
-        // Can see all reports
-        break;
-
-      default:
-        return res.status(statusCodes.FORBIDDEN).json({
-          success: false,
-          msg: "Not authorized to view reports",
-        });
-    }
-
-    // Apply additional filters
+    // Apply filters regardless of role
     if (status) query.status = status;
     if (type) query.type = type;
     if (startDate && endDate) {
@@ -910,12 +979,39 @@ exports.getReports = asyncHandler(async (req, res) => {
       };
     }
 
-    // Get paginated reports
+    // Basic authentication check - only authorized roles can view reports
+    if (!req.user.roles.some(role => 
+      ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
+    )) {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        msg: "Not authorized to view reports",
+      });
+    }
+    
+    // For police officers and admins, prioritize their own station's reports
+    if (req.user.roles.includes("police_officer") || req.user.roles.includes("police_admin")) {
+      if (req.user.policeStation) {
+        sortOptions = {
+          // This creates a field that's -1 if it's their station, 1 otherwise (for sorting)
+          isOwnStation: {
+            $cond: [
+              { $eq: ["$assignedPoliceStation", req.user.policeStation] },
+              -1,  // Their station first
+              1
+            ]
+          },
+          createdAt: -1 // Then by date
+        };
+      }
+    }
+
+    // Get paginated reports with appropriate sorting
     const reports = await Report.find(query)
       .populate("reporter", "-password")
       .populate("assignedPoliceStation")
       .populate("assignedOfficer", "firstName lastName number email")
-      .sort("-createdAt")
+      .sort(sortOptions)
       .skip((page - 1) * limit)
       .limit(limit);
 
@@ -1349,7 +1445,9 @@ exports.getUserReports = asyncHandler(async (req, res) => {
 });
 
 // Get User's Report Details
+
 exports.getUserReportDetails = asyncHandler(async (req, res) => {
+  console.log("touch")
   try {
     const { reportId } = req.params;
     const userId = req.user.id;
@@ -1392,6 +1490,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
         .populate("broadcastHistory.publishedBy", "firstName lastName roles")
         .populate("consentUpdateHistory.updatedBy", "firstName lastName")
         .select({
+          caseId: 1,
           type: 1,
           personInvolved: 1,
           additionalImages: 1,
@@ -1420,6 +1519,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
       .populate("assignedPoliceStation", "name address contactNumber")
       .populate("assignedOfficer", "firstName lastName number")
       .select({
+        caseId: 1,
         type: 1,
         personInvolved: {
           firstName: 1,
@@ -1457,11 +1557,12 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
         assignedPoliceStation: 1,
         assignedOfficer: 1
       });
-    }else {
+    } else {
       report = await Report.findOne({
         _id: reportId,
         broadcastConsent: true,
       }).select({
+        caseId: 1,
         type: 1,
         "personInvolved.firstName": 1,
         "personInvolved.lastName": 1,
@@ -1481,6 +1582,19 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
       });
     }
 
+    // Log the response before sending
+    console.log("Report details response:", {
+      success: true,
+      reportId: report._id,
+      caseId: report.caseId,
+      reportType: report.type, 
+      userRole: userRoles[0],
+      accessType: userRoles.some(role => ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)) 
+        ? "Admin/Officer (Full Access)" 
+        : (userId ? "Report Owner (Limited Access)" : "Public (Minimal Access)"),
+      fieldsReturned: Object.keys(report.toObject())
+    });
+
     res.status(statusCodes.OK).json({
       success: true,
       data: report,
@@ -1495,6 +1609,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
   }
 });
 
+
 // Search Reports
 exports.searchReports = asyncHandler(async (req, res) => {
   try {
@@ -1506,37 +1621,14 @@ exports.searchReports = asyncHandler(async (req, res) => {
     const limitPerPage = parseInt(limit);
     let searchQuery = {};
 
-    // Role-based filtering
-    switch (req.user.roles[0]) {
-      case "police_officer":
-      case "police_admin":
-        if (!req.user.policeStation) {
-          return res.status(statusCodes.BAD_REQUEST).json({
-            success: false,
-            msg: "Officer/Admin must be assigned to a police station",
-          });
-        }
-        searchQuery.assignedPoliceStation = req.user.policeStation;
-        break;
-
-      case "city_admin":
-        const cityStations = await PoliceStation.find({
-          "address.city": req.user.address.city,
-        });
-        searchQuery.assignedPoliceStation = {
-          $in: cityStations.map((station) => station._id),
-        };
-        break;
-
-      case "super_admin":
-        // Super admin can see all reports
-        break;
-
-      default:
-        return res.status(statusCodes.FORBIDDEN).json({
-          success: false,
-          msg: "Not authorized to search reports",
-        });
+    // Basic authorization check - only authorized roles can search reports
+    if (!req.user.roles.some(role => 
+      ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
+    )) {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        msg: "Not authorized to search reports",
+      });
     }
 
     // Text search
@@ -1614,6 +1706,7 @@ exports.searchReports = asyncHandler(async (req, res) => {
         .populate("assignedPoliceStation", "name address")
         .populate("assignedOfficer", "firstName lastName number")
         .select({
+          caseId: 1,
           type: 1,
           status: 1,
           personInvolved: 1,
@@ -1784,8 +1877,6 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
   }
 });
 
-
-
 // Add this new controller function
 exports.updateAllReportCaseIds = asyncHandler(async (req, res) => {
   try {
@@ -1834,7 +1925,6 @@ exports.updateAllReportCaseIds = asyncHandler(async (req, res) => {
     });
   }
 });
-
 
 // Search Reports (Public)
 exports.searchPublicReports = asyncHandler(async (req, res) => {

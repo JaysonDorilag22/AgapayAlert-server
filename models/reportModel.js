@@ -68,6 +68,7 @@ const reportSchema = new mongoose.Schema(
       bloodType: { type: String },
       medications: { type: String },
       lastKnownClothing: { type: String },
+      rewards: { type: String },
       contactInformation: { type: String },
       otherInformation: { type: String },
     },
@@ -211,7 +212,8 @@ const reportSchema = new mongoose.Schema(
 reportSchema.pre('save', async function(next) {
   if (!this.caseId) {
     const prefix = this.type.substring(0, 3).toUpperCase();
-    this.caseId = `${prefix}-${this._id}`;
+    const idSuffix = this._id.toString().slice(-7);
+    this.caseId = `${prefix}-${idSuffix}`;
   }
   next();
 });
