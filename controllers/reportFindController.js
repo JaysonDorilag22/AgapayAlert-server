@@ -215,7 +215,21 @@ exports.updateFinderReport = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { discoveryDetails, personCondition, authoritiesNotified } = req.body;
 
-  const report = await FinderReport.findById(id);
+  const report = await FinderReport.findById(id)
+    .populate("finder", "firstName lastName deviceToken")
+    .populate({
+      path: "originalReport",
+      populate: [
+        {
+          path: "personInvolved",
+        },
+        {
+          path: "assignedOfficer",
+          select: "firstName lastName deviceToken",
+        },
+      ],
+    });
+
   if (!report) {
     return res.status(statusCodes.NOT_FOUND).json({ msg: "Finder report not found" });
   }
@@ -235,7 +249,7 @@ exports.updateFinderReport = asyncHandler(async (req, res) => {
       url: result.url,
       public_id: result.public_id,
     }));
-    report.images = [...report.images, ...newImages].slice(0, 5); // Keep max 5 images
+    report.images = [...report.images, ...newImages].slice(0, 5); 
   }
 
   Object.assign(report, {
@@ -245,6 +259,76 @@ exports.updateFinderReport = asyncHandler(async (req, res) => {
   });
 
   await report.save();
+
+  // Send notifications after successful update
+  try {
+    const notificationPromises = [];
+    const updateMessage = "Finder report has been updated with new information";
+    const personName = report.originalReport.personInvolved ? 
+      `${report.originalReport.personInvolved.firstName} ${report.originalReport.personInvolved.lastName}` : 
+      "Missing person";
+
+    // 1. Notify the finder (report creator)
+    if (report.finder?.deviceToken) {
+      notificationPromises.push(
+        sendOneSignalNotification({
+          include_player_ids: [report.finder.deviceToken],
+          headings: { en: "Finder Report Updated" },
+          contents: {
+            en: "Your finder report has been updated successfully. Please keep checking for status updates.",
+          },
+          data: {
+            type: "FINDER_REPORT_UPDATED",
+            finderReportId: report._id,
+            originalReportId: report.originalReport._id,
+          },
+        })
+      );
+    }
+
+    // 2. Notify assigned officer if exists
+    if (report.originalReport.assignedOfficer?.deviceToken) {
+      notificationPromises.push(
+        sendOneSignalNotification({
+          include_player_ids: [report.originalReport.assignedOfficer.deviceToken],
+          headings: { en: "Finder Report Updated" },
+          contents: {
+            en: `A finder report for ${personName} has been updated with new information. Please review the changes.`,
+          },
+          data: {
+            type: "FINDER_REPORT_UPDATED",
+            finderReportId: report._id,
+            originalReportId: report.originalReport._id,
+          },
+        })
+      );
+    }
+
+    // Send all notifications
+    await Promise.allSettled(notificationPromises);
+
+    // Socket notifications
+    const io = getIO();
+
+    // Emit to finder
+    if (report.finder) {
+      io.to(`user_${report.finder._id}`).emit("FINDER_REPORT_UPDATED", {
+        finderReport: report,
+        message: "Your finder report has been updated successfully",
+      });
+    }
+
+    // Emit to assigned officer
+    if (report.originalReport.assignedOfficer) {
+      io.to(`user_${report.originalReport.assignedOfficer._id}`).emit("FINDER_REPORT_UPDATED", {
+        finderReport: report,
+        message: updateMessage,
+      });
+    }
+  } catch (notificationError) {
+    console.error("Failed to send notifications for finder report update:", notificationError);
+    // We don't want to fail the update if notifications fail
+  }
 
   res.status(statusCodes.OK).json({
     success: true,

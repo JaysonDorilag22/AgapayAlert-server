@@ -29,8 +29,8 @@ exports.getAllUsers = asyncHandler(async (req, res) => {
 
 // Update user details
 exports.updateUserDetails = asyncHandler(async (req, res) => {
-  const { firstName, lastName, number, address, preferredNotifications } = req.body;
-  const file = req.file; // Assuming you're using multer to handle file uploads
+  const { firstName, lastName, middleName, number, address, preferredNotifications } = req.body;
+  const files = req.files || {}; // Handle multiple file uploads
 
   const user = await User.findById(req.params.userId);
 
@@ -38,22 +38,40 @@ exports.updateUserDetails = asyncHandler(async (req, res) => {
     return res.status(statusCodes.NOT_FOUND).json({ msg: errorMessages.USER_NOT_FOUND });
   }
 
-  if (file) {
+  // Handle avatar update
+  if (files.avatar && files.avatar[0]) {
     // Delete old avatar from Cloudinary
-    if (user.avatar.public_id) {
+    if (user.avatar.public_id && user.avatar.public_id !== 'default_avatar') {
       await cloudinary.uploader.destroy(user.avatar.public_id);
     }
 
     // Upload new avatar to Cloudinary
-    const uploadResult = await uploadToCloudinary(file.path, "avatars");
+    const avatarUpload = await uploadToCloudinary(files.avatar[0].path, "avatars");
     user.avatar = {
-      url: uploadResult.url,
-      public_id: uploadResult.public_id,
+      url: avatarUpload.url,
+      public_id: avatarUpload.public_id,
     };
   }
 
+  // Handle ID card update
+  if (files.card && files.card[0]) {
+    // Delete old card from Cloudinary
+    if (user.card.public_id && user.card.public_id !== 'default_avatar') {
+      await cloudinary.uploader.destroy(user.card.public_id);
+    }
+
+    // Upload new card to Cloudinary
+    const cardUpload = await uploadToCloudinary(files.card[0].path, "id_cards");
+    user.card = {
+      url: cardUpload.url,
+      public_id: cardUpload.public_id,
+    };
+  }
+
+  // Update user fields
   user.firstName = firstName || user.firstName;
   user.lastName = lastName || user.lastName;
+  user.middleName = middleName || user.middleName;
   user.number = number || user.number;
   user.address = address || user.address;
 

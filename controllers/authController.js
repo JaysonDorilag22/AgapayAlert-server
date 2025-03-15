@@ -96,32 +96,58 @@ exports.register = asyncHandler(async (req, res) => {
     return res.status(statusCodes.BAD_REQUEST).json({ errors: errors.array() });
   }
 
-  const { firstName, lastName, number, email, password, address } = req.body;
-  const file = req.file;
-
-  if (!file) {
+  const { firstName, lastName, middleName, number, email, password, address } = req.body;
+  
+  // Check if files were uploaded
+  if (!req.files || !req.files.avatar) {
     return res.status(statusCodes.BAD_REQUEST).json({ msg: errorMessages.AVATAR_REQUIRED });
   }
+  
+  const avatarFile = req.files.avatar[0];
+  const cardFile = req.files.card?.[0]; // Optional card file
 
-  let user = await User.findOne({ email });
-  if (user) {
+  // Check if user already exists with email
+  let existingUser = await User.findOne({ email });
+  if (existingUser) {
     return res.status(statusCodes.CONFLICT).json({ msg: errorMessages.USER_ALREADY_EXISTS });
   }
+  
+  // Check if phone number is already in use
+  existingUser = await User.findOne({ number });
+  if (existingUser) {
+    return res.status(statusCodes.CONFLICT).json({ 
+      msg: "Phone number already in use"
+    });
+  }
 
-  const uploadResult = await uploadToCloudinary(file.path, 'avatars');
+  // Upload avatar to 'avatars' folder in Cloudinary
+  const avatarUpload = await uploadToCloudinary(avatarFile.path, 'avatars');
   const avatar = {
-    url: uploadResult.url,
-    public_id: uploadResult.public_id,
+    url: avatarUpload.url,
+    public_id: avatarUpload.public_id,
   };
+  
+  // Upload card to 'id_cards' folder in Cloudinary if provided
+  let card = null;
+  if (cardFile) {
+    const cardUpload = await uploadToCloudinary(cardFile.path, 'id_cards');
+    card = {
+      url: cardUpload.url,
+      public_id: cardUpload.public_id,
+    };
+  }
 
-  user = new User({
+  // Create new user with both avatar and card (if provided)
+  const user = new User({
     firstName,
     lastName,
+    middleName,
     number,
     email,
     password,
     address,
     avatar,
+    card,
     preferredNotifications: {
       push: true,
       email: false,
@@ -141,7 +167,6 @@ exports.register = asyncHandler(async (req, res) => {
 
   res.status(statusCodes.CREATED).json({ msg: 'User registered, please verify your email' });
 });
-
 // Verify account
 exports.verifyAccount = asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
