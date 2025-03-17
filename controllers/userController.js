@@ -133,7 +133,7 @@ exports.deleteUser = asyncHandler(async (req, res) => {
 // Create a new user with a specific role
 exports.createUserWithRole = asyncHandler(async (req, res) => {
   try {
-    const { firstName, lastName, number, email, password, address, role, policeStationId } = req.body;
+    const { firstName, lastName, number, email, password, address, role, policeStationId, rank } = req.body;
     const creatorRole = req.user.roles[0];
     const file = req.file;
 
@@ -168,9 +168,17 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
       };
     }
 
-    // Validate police station and city based on creator's role
+    // Validate police station and creator roles
     let policeStation = null;
     if (role === "police_officer" || role === "police_admin") {
+      // Only super_admin or police_admin can create police officers/admins
+      if (creatorRole !== "super_admin" && creatorRole !== "police_admin") {
+        return res.status(statusCodes.FORBIDDEN).json({
+          success: false,
+          msg: "Only super admin or police admin can create police officers/admins",
+        });
+      }
+      
       policeStation = await PoliceStation.findById(policeStationId);
 
       if (!policeStation) {
@@ -187,26 +195,6 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
             msg: "Can only create officers for your own police station",
           });
         }
-      }
-
-      // For city_admin creating police_admin/officers
-      if (creatorRole === "city_admin") {
-        if (policeStation.address.city !== req.user.address.city) {
-          return res.status(statusCodes.FORBIDDEN).json({
-            success: false,
-            msg: "Can only create users for police stations in your city",
-          });
-        }
-      }
-    }
-
-    // For city_admin role, ensure city matches creator's city
-    if (role === "city_admin" && creatorRole === "super_admin") {
-      if (!address?.city) {
-        return res.status(statusCodes.BAD_REQUEST).json({
-          success: false,
-          msg: "City is required for city admin accounts",
-        });
       }
     }
 
@@ -228,6 +216,7 @@ exports.createUserWithRole = asyncHandler(async (req, res) => {
       policeStation: policeStation ? policeStation._id : null,
       isVerified: true,
       avatar,
+      rank: rank || null, // Include rank field with null fallback
     });
 
     await user.save();

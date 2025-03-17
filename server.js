@@ -10,6 +10,7 @@ const { initializeSocket } = require('./utils/socketUtils');
 const connectDB = require('./config/db');
 const errorHandler = require('./middlewares/errorHandler');
 const MongoStore = require('connect-mongo');
+const cron = require('node-cron');
 // Route imports
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
@@ -24,6 +25,7 @@ const feedbackRoutes = require("./routes/feedbackRoutes");
 const messengerRoutes = require("./routes/messengerRoutes");
 const emergencyContactRoutes = require("./routes/emergencyContactRoutes");
 const { initializeMessenger } = require("./controllers/messengerController");
+const { updateAbsentToMissingReports } = require('./controllers/reportController');
 // Load env vars
 dotenv.config();
 
@@ -119,6 +121,16 @@ app.use((req, res) => {
   });
 });
 
+// Run every hour
+cron.schedule('0 * * * *', async () => {
+  try {
+    console.log('Running automatic Absent → Missing update check...');
+    const result = await updateAbsentToMissingReports();
+    console.log(`Update complete: ${result.updatedCount} reports updated`);
+  } catch (error) {
+    console.error('Scheduled task error:', error);
+  }
+});
 //messenger
 const startServer = async () => {
   try {
