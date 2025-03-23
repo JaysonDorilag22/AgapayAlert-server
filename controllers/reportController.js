@@ -998,14 +998,17 @@ exports.getReports = asyncHandler(async (req, res) => {
       page = 1,
       limit = 10,
     } = req.query;
-    let query = {};
-    let sortOptions = { createdAt: -1 };  // Default sort by newest first
+    const currentPage = parseInt(page);
+    const limitPerPage = parseInt(limit);
+
+    // Base match stage for the aggregation pipeline
+    let matchStage = {};
 
     // Apply filters regardless of role
-    if (status) query.status = status;
-    if (type) query.type = type;
+    if (status) matchStage.status = status;
+    if (type) matchStage.type = type;
     if (startDate && endDate) {
-      query.createdAt = {
+      matchStage.createdAt = {
         $gte: new Date(startDate),
         $lte: new Date(endDate),
       };
@@ -1020,43 +1023,84 @@ exports.getReports = asyncHandler(async (req, res) => {
         msg: "Not authorized to view reports",
       });
     }
-    
+
+    // Additional filter for police officers to see only their assigned reports
+    if (req.user.roles.includes("police_officer")) {
+      matchStage.assignedOfficer = req.user._id;
+    }
+
+    // Aggregation pipeline
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $lookup: {
+          from: "users",
+          localField: "reporter",
+          foreignField: "_id",
+          as: "reporter",
+        },
+      },
+      { $unwind: "$reporter" },
+      {
+        $lookup: {
+          from: "policestations",
+          localField: "assignedPoliceStation",
+          foreignField: "_id",
+          as: "assignedPoliceStation",
+        },
+      },
+      { $unwind: "$assignedPoliceStation" },
+      {
+        $lookup: {
+          from: "users",
+          localField: "assignedOfficer",
+          foreignField: "_id",
+          as: "assignedOfficer",
+        },
+      },
+      { $unwind: { path: "$assignedOfficer", preserveNullAndEmptyArrays: true } },
+    ];
+
     // For police officers and admins, prioritize their own station's reports
     if (req.user.roles.includes("police_officer") || req.user.roles.includes("police_admin")) {
       if (req.user.policeStation) {
-        sortOptions = {
-          // This creates a field that's -1 if it's their station, 1 otherwise (for sorting)
-          isOwnStation: {
-            $cond: [
-              { $eq: ["$assignedPoliceStation", req.user.policeStation] },
-              -1,  // Their station first
-              1
-            ]
-          },
-          createdAt: -1 // Then by date
-        };
+        pipeline.push({
+          $addFields: {
+            isOwnStation: {
+              $cond: [
+                { $eq: ["$assignedPoliceStation._id", req.user.policeStation] },
+                -1,  // Their station first
+                1
+              ]
+            }
+          }
+        });
+        pipeline.push({ $sort: { isOwnStation: 1, createdAt: -1 } });
+      } else {
+        pipeline.push({ $sort: { createdAt: -1 } });
       }
+    } else {
+      pipeline.push({ $sort: { createdAt: -1 } });
     }
 
-    // Get paginated reports with appropriate sorting
-    const reports = await Report.find(query)
-      .populate("reporter", "-password")
-      .populate("assignedPoliceStation")
-      .populate("assignedOfficer", "firstName lastName number email")
-      .sort(sortOptions)
-      .skip((page - 1) * limit)
-      .limit(limit);
+    // Pagination
+    pipeline.push({ $skip: (currentPage - 1) * limitPerPage });
+    pipeline.push({ $limit: limitPerPage });
 
-    const total = await Report.countDocuments(query);
+    // Execute the aggregation pipeline
+    const reports = await Report.aggregate(pipeline);
+
+    // Get total count for pagination
+    const total = await Report.countDocuments(matchStage);
 
     res.status(statusCodes.OK).json({
       success: true,
       data: {
         reports,
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
+        currentPage,
+        totalPages: Math.ceil(total / limitPerPage),
         totalReports: total,
-        hasMore: page * limit < total,
+        hasMore: currentPage * limitPerPage < total,
       },
     });
   } catch (error) {
