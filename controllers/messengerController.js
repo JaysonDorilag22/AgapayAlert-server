@@ -5,11 +5,47 @@ const PoliceStation = require("../models/policeStationModel");
 const MessengerReportSession = require("../models/MessengerReportSessionModel");
 const { getCoordinatesFromAddress } = require("../utils/geocoding");
 const uploadToCloudinary = require("../utils/uploadToCloudinary");
-const { findPoliceStation } = require("./reportController");
 const fs = require('fs');
 const path = require('path');
 const FB_API_VERSION = 'v22.0';
 const FB_API_BASE = `https://graph.facebook.com/${FB_API_VERSION}`;
+
+//find police station
+const findPoliceStation = async (selectedId, coordinates) => {
+  if (selectedId) {
+    const selected = await PoliceStation.findById(selectedId);
+    if (selected) return selected;
+  }
+
+  // Find nearest within 5km
+  const nearest = await PoliceStation.findOne({
+    location: {
+      $near: {
+        $geometry: {
+          type: "Point",
+          coordinates,
+        },
+        $maxDistance: 5000,
+      },
+    },
+  });
+
+  // If no station within 5km, find absolute nearest
+  if (!nearest) {
+    return await PoliceStation.findOne({
+      location: {
+        $near: {
+          $geometry: {
+            type: "Point",
+            coordinates,
+          },
+        },
+      },
+    });
+  }
+
+  return nearest;
+};
 
 exports.initializeMessenger = async () => {
   try {
@@ -400,50 +436,121 @@ async function handleLocationInput(psid, text, session) {
 }
 
 async function handlePhotoInput(psid, message, session) {
-  // Check if message contains an image attachment
-  if (message.attachments && message.attachments[0] && message.attachments[0].type === 'image') {
-    const photoUrl = message.attachments[0].payload.url;
-    
-    // Update session
-    await MessengerReportSession.findOneAndUpdate(
-      { psid },
-      { 
-        'data.photoUrl': photoUrl,
-        currentStep: 'CONFIRM'
-      },
-      { new: true }
-    );
-    
-    // Get updated session
-    const updatedSession = await MessengerReportSession.findOne({ psid });
-    const reportData = updatedSession.data;
-    
-    // Show confirmation
-    await sendResponse(psid, {
-      attachment: {
-        type: "template",
-        payload: {
-          template_type: "button",
-          text: `Please confirm your report:\n\nType: ${reportData.type}\nName: ${reportData.personInvolved.firstName} ${reportData.personInvolved.lastName}\nAge: ${reportData.personInvolved.age}\nLocation: ${reportData.location.address.streetAddress}\n\nIs this information correct?`,
-          buttons: [
-            {
-              type: "postback",
-              title: "Submit Report",
-              payload: "SUBMIT_REPORT"
-            },
-            {
-              type: "postback",
-              title: "Cancel",
-              payload: "CANCEL_REPORT"
-            }
-          ]
-        }
+  try {
+    // Check if message contains an image attachment
+    if (message.attachments && message.attachments[0] && message.attachments[0].type === 'image') {
+      const photoUrl = message.attachments[0].payload.url;
+      
+      // Process photo right away to avoid issues later
+      const photoResult = await processMessengerPhoto(photoUrl, psid);
+      
+      if (!photoResult) {
+        return await sendResponse(psid, { 
+          text: "We had trouble processing your photo. Please try uploading it again." 
+        });
       }
-    });
-  } else {
+      
+      // Update session with processed image info
+      await MessengerReportSession.findOneAndUpdate(
+        { psid },
+        { 
+          'data.photo': {
+            url: photoResult.url,
+            public_id: photoResult.public_id
+          },
+          currentStep: 'CONFIRM'
+        },
+        { new: true }
+      );
+      
+      // Get updated session
+      const updatedSession = await MessengerReportSession.findOne({ psid });
+      const reportData = updatedSession.data;
+      
+      // Show confirmation with image preview
+      await sendResponse(psid, {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "generic",
+            elements: [{
+              title: "Report Preview",
+              subtitle: `Type: ${reportData.type}\nName: ${reportData.personInvolved.firstName} ${reportData.personInvolved.lastName}`,
+              image_url: photoResult.url,
+              buttons: [
+                {
+                  type: "postback",
+                  title: "Submit Report",
+                  payload: "SUBMIT_REPORT"
+                },
+                {
+                  type: "postback",
+                  title: "Cancel",
+                  payload: "CANCEL_REPORT"
+                }
+              ]
+            }]
+          }
+        }
+      });
+    } else {
+      await sendResponse(psid, { 
+        text: "Please upload a photo of the person (tap the + button and select Gallery):" 
+      });
+    }
+  } catch (error) {
+    console.error('Error processing photo:', error);
     await sendResponse(psid, { 
-      text: "Please upload a photo of the person (tap the + button and select Gallery):" 
+      text: "We encountered an error while processing your photo. Please try again." 
     });
+  }
+}
+
+/**
+ * Process and upload photo from Messenger to Cloudinary
+ * @param {string} photoUrl - URL of the photo from Messenger
+ * @param {string} psid - Sender's PSID for naming the temp file
+ * @returns {Promise<Object|null>} - Cloudinary upload result or null if failed
+ */
+async function processMessengerPhoto(photoUrl, psid) {
+  try {
+    // Download image from Facebook
+    const response = await axios.get(photoUrl, { 
+      responseType: 'arraybuffer',
+      timeout: 10000 // 10 second timeout
+    });
+    
+    const buffer = Buffer.from(response.data, 'binary');
+    
+    // Validate image size (10MB max)
+    if (buffer.length > 10 * 1024 * 1024) {
+      console.error('Image too large:', buffer.length / (1024 * 1024), 'MB');
+      return null;
+    }
+    
+    // Create temp directory if it doesn't exist
+    const tempDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const tempFilePath = path.join(tempDir, `messenger_${psid}_${Date.now()}.jpg`);
+    fs.writeFileSync(tempFilePath, buffer);
+    
+    // Upload to Cloudinary with optimization options
+    const photoResult = await uploadToCloudinary(tempFilePath, "messenger_reports", 'image');
+    
+    // Clean up temp file
+    try {
+      fs.unlinkSync(tempFilePath);
+    } catch (unlinkError) {
+      console.warn(`Warning: Could not delete temporary file ${tempFilePath}:`, unlinkError);
+    }
+    
+    return photoResult;
+  } catch (error) {
+    console.error('Error processing messenger photo:', error);
+    return null;
   }
 }
 
@@ -466,31 +573,11 @@ async function submitReport(psid) {
     // Get session data
     const reportData = session.data;
     
-    // Process photo (download from URL and upload to Cloudinary)
-    let photoResult = null;
-    if (reportData.photoUrl) {
-      try {
-        // Download image from Facebook
-        const response = await axios.get(reportData.photoUrl, { responseType: 'arraybuffer' });
-        const buffer = Buffer.from(response.data, 'binary');
-        
-        // Create temp file
-        const tempDir = path.join(__dirname, '../uploads');
-        if (!fs.existsSync(tempDir)) {
-          fs.mkdirSync(tempDir, { recursive: true });
-        }
-        const tempFilePath = path.join(tempDir, `messenger_${psid}_${Date.now()}.jpg`);
-        fs.writeFileSync(tempFilePath, buffer);
-        
-        // Upload to Cloudinary
-        photoResult = await uploadToCloudinary(tempFilePath, "reports");
-        
-        // Clean up temp file
-        fs.unlinkSync(tempFilePath);
-      } catch (error) {
-        console.error('Error processing photo:', error);
-        await sendResponse(psid, { text: "We had trouble processing your photo, but we'll continue with the report." });
-      }
+    // Check if we have photo data
+    if (!reportData.photo || !reportData.photo.url) {
+      return await sendResponse(psid, { 
+        text: "Missing photo information. Please restart the report process and upload a photo." 
+      });
     }
     
     // Get coordinates
@@ -534,10 +621,10 @@ async function submitReport(psid) {
         lastSeentime: new Date().toTimeString().substring(0, 5),
         lastKnownLocation: reportData.location.address.streetAddress,
         relationship: "Not specified via messenger",
-        mostRecentPhoto: photoResult ? {
-          url: photoResult.url,
-          public_id: photoResult.public_id,
-        } : undefined
+        mostRecentPhoto: {
+          url: reportData.photo.url,
+          public_id: reportData.photo.public_id,
+        }
       },
       location: {
         type: "Point",

@@ -31,7 +31,10 @@ const messengerReportSessionSchema = new mongoose.Schema({
         zipCode: String
       }
     },
-    photoUrl: String
+    photo: {
+      url: String,
+      public_id: String
+    }
   },
   expiresAt: {
     type: Date,
