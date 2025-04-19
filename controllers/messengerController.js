@@ -541,14 +541,14 @@ async function processMessengerPhoto(photoUrl, psid) {
     const photoResult = await uploadToCloudinary(tempFilePath, "messenger_reports", 'image');
     
     // Check if file exists before attempting to delete
-    if (fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-        console.log(`Successfully deleted temporary file: ${tempFilePath}`);
-      } catch (unlinkError) {
-        console.warn(`Warning: Could not delete temporary file ${tempFilePath}:`, unlinkError);
-      }
-    }
+    // if (fs.existsSync(tempFilePath)) {
+    //   try {
+    //     fs.unlinkSync(tempFilePath);
+    //     console.log(`Successfully deleted temporary file: ${tempFilePath}`);
+    //   } catch (unlinkError) {
+    //     console.warn(`Warning: Could not delete temporary file ${tempFilePath}:`, unlinkError);
+    //   }
+    // }
     
     return photoResult;
   } catch (error) {
