@@ -540,15 +540,15 @@ async function processMessengerPhoto(photoUrl, psid) {
     // Upload to Cloudinary with optimization options
     const photoResult = await uploadToCloudinary(tempFilePath, "messenger_reports", 'image');
     
-    // Check if file exists before attempting to delete
-    // if (fs.existsSync(tempFilePath)) {
-    //   try {
-    //     fs.unlinkSync(tempFilePath);
-    //     console.log(`Successfully deleted temporary file: ${tempFilePath}`);
-    //   } catch (unlinkError) {
-    //     console.warn(`Warning: Could not delete temporary file ${tempFilePath}:`, unlinkError);
-    //   }
-    // }
+    // Uncomment and fix this section to clean up temp files
+    if (fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+        console.log(`Successfully deleted temporary file: ${tempFilePath}`);
+      } catch (unlinkError) {
+        console.warn(`Warning: Could not delete temporary file ${tempFilePath}:`, unlinkError);
+      }
+    }
     
     return photoResult;
   } catch (error) {
@@ -565,6 +565,8 @@ async function submitReport(psid) {
       return await sendResponse(psid, { text: "Your report session has expired. Please start again." });
     }
     
+    console.log("Found session:", session._id);
+    
     // Find user
     const user = await User.findOne({ messengerPSID: psid });
     if (!user) {
@@ -573,8 +575,11 @@ async function submitReport(psid) {
       });
     }
     
+    console.log("Found user:", user._id);
+    
     // Get session data
     const reportData = session.data;
+    console.log("Report data:", JSON.stringify(reportData, null, 2));
     
     // Check if we have photo data
     if (!reportData.photo || !reportData.photo.url) {
@@ -594,6 +599,8 @@ async function submitReport(psid) {
     };
     
     const geoData = await getCoordinatesFromAddress(location.address);
+    console.log("Geocoding result:", geoData);
+    
     if (!geoData.success) {
       await sendResponse(psid, { 
         text: "We couldn't process the location precisely. Please provide more details in the app later."
@@ -604,11 +611,14 @@ async function submitReport(psid) {
     // Find police station
     const coordinates = geoData.success ? geoData.coordinates : [0, 0];
     const assignedStation = await findPoliceStation(null, coordinates);
+    
     if (!assignedStation) {
       return await sendResponse(psid, { 
         text: "We couldn't find a police station to assign. Please submit your report through the app."
       });
     }
+    
+    console.log("Assigned station:", assignedStation._id);
     
     // Create report
     const report = new Report({
@@ -646,20 +656,51 @@ async function submitReport(psid) {
       ]
     });
     
-    await report.save();
-    
-    // Delete session
-    await session.deleteOne();
-    
-    // Confirm to user
-    await sendResponse(psid, { 
-      text: `Thank you. Your report has been submitted successfully!\n\nCase ID: ${report.caseId}\n\nIt has been assigned to ${assignedStation.name}.\n\nYou can view and update this report in the AgapayAlert app.` 
+    console.log("About to save report with data:", {
+      type: report.type,
+      reporter: report.reporter,
+      firstName: report.personInvolved.firstName,
+      lastName: report.personInvolved.lastName,
+      coordinates: report.location.coordinates,
+      photoUrl: report.personInvolved.mostRecentPhoto.url
     });
     
+    // Save with explicit error handling
+    try {
+      const savedReport = await report.save();
+      console.log("Report saved successfully:", savedReport._id, savedReport.caseId);
+      
+      // Delete session only after successful save
+      await session.deleteOne();
+      
+      // Confirm to user
+      await sendResponse(psid, { 
+        text: `Thank you. Your report has been submitted successfully!\n\nCase ID: ${savedReport.caseId}\n\nIt has been assigned to ${assignedStation.name}.\n\nYou can view and update this report in the AgapayAlert app.` 
+      });
+    } catch (saveError) {
+      console.error("Error saving report:", saveError);
+      
+      // Check for validation errors
+      if (saveError.name === 'ValidationError') {
+        console.error("Validation errors:", saveError.errors);
+        
+        const errorMessages = Object.keys(saveError.errors).map(field => 
+          `${field}: ${saveError.errors[field].message}`
+        ).join('\n');
+        
+        await sendResponse(psid, { 
+          text: `We encountered validation errors while creating your report:\n\n${errorMessages}\n\nPlease try again or use the AgapayAlert app.` 
+        });
+      } else {
+        await sendResponse(psid, { 
+          text: "We encountered an error while saving your report. Please try again or use the AgapayAlert app." 
+        });
+      }
+    }
   } catch (error) {
-    console.error('Error submitting report:', error);
+    console.error('Error in submitReport:', error);
     await sendResponse(psid, { 
-      text: "We encountered an error while submitting your report. Please try again or use the AgapayAlert app."
+      text: "We encountered an error while submitting your report. Please try again or use the AgapayAlert app." 
     });
   }
 }
@@ -727,6 +768,53 @@ async function sendResponse(sender_psid, response) {
   }
 }
 
+
+// Add this function to your controller
+async function validateReportData(reportData) {
+  // Check minimal required fields
+  const requiredFields = [
+    'type',
+    'personInvolved.firstName',
+    'personInvolved.lastName',
+    'personInvolved.mostRecentPhoto.url',
+    'personInvolved.mostRecentPhoto.public_id',
+    'location.coordinates',
+    'location.address.streetAddress',
+    'location.address.barangay',
+    'location.address.city',
+    'location.address.zipCode',
+    'assignedPoliceStation',
+    'reporter'
+  ];
+  
+  const missingFields = [];
+  
+  // Helper function to check nested fields
+  function checkNestedField(obj, fieldPath) {
+    const parts = fieldPath.split('.');
+    let current = obj;
+    
+    for (const part of parts) {
+      if (current === undefined || current === null || !current.hasOwnProperty(part)) {
+        return false;
+      }
+      current = current[part];
+    }
+    
+    return current !== undefined && current !== null && current !== '';
+  }
+  
+  for (const field of requiredFields) {
+    if (!checkNestedField(reportData, field)) {
+      missingFields.push(field);
+    }
+  }
+  
+  return {
+    isValid: missingFields.length === 0,
+    missingFields
+  };
+}
 exports.sendCustomMessage = async (psid, message) => {
   return await sendResponse(psid, { text: message });
 };
