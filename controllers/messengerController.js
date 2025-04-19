@@ -2,7 +2,7 @@ const axios = require("axios");
 const User = require("../models/userModel");
 const Report = require("../models/reportModel");
 const PoliceStation = require("../models/policeStationModel");
-const MessengerReportSession = require("../models/messengerReportSessionModel");
+const MessengerReportSession = require("../models/MessengerReportSessionModel");
 const { getCoordinatesFromAddress } = require("../utils/geocoding");
 const uploadToCloudinary = require("../utils/uploadToCloudinary");
 const { findPoliceStation } = require("./reportController");
@@ -615,7 +615,6 @@ async function sendReportMenu(psid) {
     }
   });
 }
-
 
 async function sendResponse(sender_psid, response) {
   try {
