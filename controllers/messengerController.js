@@ -1,5 +1,13 @@
 const axios = require("axios");
 const User = require("../models/userModel");
+const Report = require("../models/reportModel");
+const PoliceStation = require("../models/policeStationModel");
+const MessengerReportSession = require("../models/messengerReportSessionModel");
+const { getCoordinatesFromAddress } = require("../utils/geocoding");
+const uploadToCloudinary = require("../utils/uploadToCloudinary");
+const { findPoliceStation } = require("./reportController");
+const fs = require('fs');
+const path = require('path');
 const FB_API_VERSION = 'v22.0';
 const FB_API_BASE = `https://graph.facebook.com/${FB_API_VERSION}`;
 
@@ -81,7 +89,7 @@ exports.handlePostback = async (sender_psid, postback) => {
     console.log('🔄 Processing postback:', postback.payload);
 
     if (postback.payload === 'GET_STARTED') {
-      // Send PSID message
+      // Existing GET_STARTED logic...
       await sendResponse(sender_psid, {
         text: `Thank you for connecting with AgapayAlert! 🚨\n\nYour PSID is: ${sender_psid}\n\nSave this PSID to link your account in the AgapayAlert app.`
       });
@@ -93,7 +101,7 @@ exports.handlePostback = async (sender_psid, postback) => {
         { upsert: true, new: true }
       );
 
-      // Send menu options
+      // Add Create Report option to the menu
       await sendResponse(sender_psid, {
         attachment: {
           type: "template",
@@ -101,9 +109,14 @@ exports.handlePostback = async (sender_psid, postback) => {
             template_type: "generic",
             elements: [{
               title: "AgapayAlert Services",
-              subtitle: "Get real-time alerts about missing persons in your area",
+              subtitle: "Get real-time alerts and report missing persons",
               image_url: "https://agapayalert-web.onrender.com/assets/AGAPAYALERT%20-%20imagotype-CfBGhIL1.svg",
               buttons: [
+                {
+                  type: "postback",
+                  title: "Create Report",
+                  payload: "CREATE_REPORT"
+                },
                 {
                   type: "postback",
                   title: "About Us",
@@ -120,14 +133,489 @@ exports.handlePostback = async (sender_psid, postback) => {
         }
       });
     } else if (postback.payload === "ABOUT_US") {
-      await sendResponse(sender_psid, {
-        text: "AgapayAlert is a community-driven platform helping locate missing persons through real-time alerts and coordination with local authorities. 🚨\n\nWe work together to make our communities safer."
-      });
+      // Existing ABOUT_US logic...
+    } else if (postback.payload === "CREATE_REPORT") {
+      await startReportFlow(sender_psid);
+    } else if (postback.payload.startsWith("REPORT_TYPE_")) {
+      const reportType = postback.payload.replace("REPORT_TYPE_", "");
+      await handleReportTypeSelection(sender_psid, reportType);
+    } else if (postback.payload === "REPORT_MORE_TYPES") {
+      await sendMoreReportTypes(sender_psid);
+    } else if (postback.payload === "SUBMIT_REPORT") {
+      await submitReport(sender_psid);
+    } else if (postback.payload === "CANCEL_REPORT") {
+      await cancelReport(sender_psid);
     }
   } catch (error) {
     console.error('❌ Error handling postback:', error);
   }
 };
+
+// Update handleMessage function to process report inputs
+exports.handleMessage = async (sender_psid, received_message) => {
+  try {
+    console.log('📨 New message from:', sender_psid);
+    
+    // Check if user is in a report flow
+    const session = await MessengerReportSession.findOne({ psid: sender_psid });
+    
+    if (session) {
+      // Process based on current step
+      switch(session.currentStep) {
+        case 'PERSON_NAME':
+          return await handlePersonNameInput(sender_psid, received_message.text, session);
+        case 'PERSON_AGE':
+          return await handlePersonAgeInput(sender_psid, received_message.text, session);
+        case 'LOCATION':
+          return await handleLocationInput(sender_psid, received_message.text, session);
+        case 'PHOTO':
+          return await handlePhotoInput(sender_psid, received_message, session);
+        default:
+          // Welcome message for other steps
+          await sendReportMenu(sender_psid);
+          return;
+      }
+    }
+
+    // Default response for non-report flow
+    await sendResponse(sender_psid, {
+      attachment: {
+        type: "template",
+        payload: {
+          template_type: "button",
+          text: "Hello! What would you like to do today?",
+          buttons: [
+            {
+              type: "postback",
+              title: "Create a Report",
+              payload: "CREATE_REPORT"
+            },
+            {
+              type: "postback",
+              title: "About AgapayAlert",
+              payload: "ABOUT_US"
+            }
+          ]
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error handling message:', error);
+  }
+};
+
+// Report flow functions
+async function startReportFlow(psid) {
+  try {
+    // Check if user is linked to an account
+    const user = await User.findOne({ messengerPSID: psid });
+    if (!user) {
+      return await sendResponse(psid, { 
+        text: "You need to link your Messenger account to an AgapayAlert account first. Please register in the app and link your account using your PSID." 
+      });
+    }
+    
+    // Create or reset session
+    await MessengerReportSession.findOneAndUpdate(
+      { psid },
+      { 
+        psid,
+        currentStep: 'TYPE',
+        data: {}
+      },
+      { upsert: true, new: true }
+    );
+    
+    // Send report type options
+    await sendResponse(psid, {
+      attachment: {
+        type: "template",
+        payload: {
+          template_type: "button",
+          text: "What type of report would you like to submit?",
+          buttons: [
+            {
+              type: "postback",
+              title: "Missing Person",
+              payload: "REPORT_TYPE_Missing"
+            },
+            {
+              type: "postback",
+              title: "Absent Person",
+              payload: "REPORT_TYPE_Absent"
+            },
+            {
+              type: "postback",
+              title: "More Options",
+              payload: "REPORT_MORE_TYPES"
+            }
+          ]
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error starting report flow:', error);
+    await sendResponse(psid, { text: "Sorry, we encountered an error. Please try again later." });
+  }
+}
+
+async function sendMoreReportTypes(psid) {
+  await sendResponse(psid, {
+    attachment: {
+      type: "template",
+      payload: {
+        template_type: "button",
+        text: "Additional report types:",
+        buttons: [
+          {
+            type: "postback",
+            title: "Abducted Person",
+            payload: "REPORT_TYPE_Abducted"
+          },
+          {
+            type: "postback",
+            title: "Kidnapped Person",
+            payload: "REPORT_TYPE_Kidnapped"
+          },
+          {
+            type: "postback",
+            title: "Hit-and-Run",
+            payload: "REPORT_TYPE_Hit-and-Run"
+          }
+        ]
+      }
+    }
+  });
+}
+
+async function handleReportTypeSelection(psid, reportType) {
+  // Update session with report type
+  await MessengerReportSession.findOneAndUpdate(
+    { psid },
+    { 
+      'data.type': reportType,
+      currentStep: 'PERSON_NAME'
+    },
+    { new: true }
+  );
+  
+  // Ask for person's name
+  await sendResponse(psid, { 
+    text: "Please enter the person's full name (First and Last name):" 
+  });
+}
+
+async function handlePersonNameInput(psid, text, session) {
+  // Simple name parsing
+  const nameParts = text.trim().split(' ');
+  let firstName = nameParts[0];
+  let lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+  
+  if (!firstName || !lastName) {
+    return await sendResponse(psid, { 
+      text: "Please provide both first and last name (e.g., Juan Dela Cruz):" 
+    });
+  }
+  
+  // Update session
+  await MessengerReportSession.findOneAndUpdate(
+    { psid },
+    { 
+      'data.personInvolved.firstName': firstName,
+      'data.personInvolved.lastName': lastName,
+      currentStep: 'PERSON_AGE'
+    },
+    { new: true }
+  );
+  
+  // Ask for person's age
+  await sendResponse(psid, { 
+    text: "Please enter the person's age:" 
+  });
+}
+
+async function handlePersonAgeInput(psid, text, session) {
+  const age = parseInt(text.trim());
+  
+  if (isNaN(age) || age < 0 || age > 120) {
+    return await sendResponse(psid, { 
+      text: "Please enter a valid age (0-120):" 
+    });
+  }
+  
+  // Update session
+  await MessengerReportSession.findOneAndUpdate(
+    { psid },
+    { 
+      'data.personInvolved.age': age,
+      currentStep: 'LOCATION'
+    },
+    { new: true }
+  );
+  
+  // Ask for location
+  await sendResponse(psid, { 
+    text: "Please provide the last known location (include street, barangay, city and zip code if possible):" 
+  });
+}
+
+async function handleLocationInput(psid, text, session) {
+  const address = text.trim();
+  
+  if (address.length < 10) {
+    return await sendResponse(psid, { 
+      text: "Please provide more details about the location:" 
+    });
+  }
+  
+  // Simple address parsing - in production you would need a more sophisticated parser
+  let streetAddress = address;
+  let barangay = "Unknown";
+  let city = "Unknown";
+  let zipCode = "Unknown";
+  
+  // Try to extract city from the address
+  const cityMatch = address.match(/(?:in|at|,)\s+([A-Za-z\s]+City|[A-Za-z\s]+Municipality)/i);
+  if (cityMatch) {
+    city = cityMatch[1].trim();
+  }
+  
+  // Update session
+  await MessengerReportSession.findOneAndUpdate(
+    { psid },
+    { 
+      'data.location.address.streetAddress': streetAddress,
+      'data.location.address.barangay': barangay,
+      'data.location.address.city': city,
+      'data.location.address.zipCode': zipCode,
+      currentStep: 'PHOTO'
+    },
+    { new: true }
+  );
+  
+  // Ask for photo
+  await sendResponse(psid, { 
+    text: "Please upload a recent photo of the person:" 
+  });
+}
+
+async function handlePhotoInput(psid, message, session) {
+  // Check if message contains an image attachment
+  if (message.attachments && message.attachments[0] && message.attachments[0].type === 'image') {
+    const photoUrl = message.attachments[0].payload.url;
+    
+    // Update session
+    await MessengerReportSession.findOneAndUpdate(
+      { psid },
+      { 
+        'data.photoUrl': photoUrl,
+        currentStep: 'CONFIRM'
+      },
+      { new: true }
+    );
+    
+    // Get updated session
+    const updatedSession = await MessengerReportSession.findOne({ psid });
+    const reportData = updatedSession.data;
+    
+    // Show confirmation
+    await sendResponse(psid, {
+      attachment: {
+        type: "template",
+        payload: {
+          template_type: "button",
+          text: `Please confirm your report:\n\nType: ${reportData.type}\nName: ${reportData.personInvolved.firstName} ${reportData.personInvolved.lastName}\nAge: ${reportData.personInvolved.age}\nLocation: ${reportData.location.address.streetAddress}\n\nIs this information correct?`,
+          buttons: [
+            {
+              type: "postback",
+              title: "Submit Report",
+              payload: "SUBMIT_REPORT"
+            },
+            {
+              type: "postback",
+              title: "Cancel",
+              payload: "CANCEL_REPORT"
+            }
+          ]
+        }
+      }
+    });
+  } else {
+    await sendResponse(psid, { 
+      text: "Please upload a photo of the person (tap the + button and select Gallery):" 
+    });
+  }
+}
+
+async function submitReport(psid) {
+  try {
+    // Find session
+    const session = await MessengerReportSession.findOne({ psid });
+    if (!session) {
+      return await sendResponse(psid, { text: "Your report session has expired. Please start again." });
+    }
+    
+    // Find user
+    const user = await User.findOne({ messengerPSID: psid });
+    if (!user) {
+      return await sendResponse(psid, { 
+        text: "Your Facebook account needs to be linked to an AgapayAlert account to submit reports." 
+      });
+    }
+    
+    // Get session data
+    const reportData = session.data;
+    
+    // Process photo (download from URL and upload to Cloudinary)
+    let photoResult = null;
+    if (reportData.photoUrl) {
+      try {
+        // Download image from Facebook
+        const response = await axios.get(reportData.photoUrl, { responseType: 'arraybuffer' });
+        const buffer = Buffer.from(response.data, 'binary');
+        
+        // Create temp file
+        const tempDir = path.join(__dirname, '../uploads');
+        if (!fs.existsSync(tempDir)) {
+          fs.mkdirSync(tempDir, { recursive: true });
+        }
+        const tempFilePath = path.join(tempDir, `messenger_${psid}_${Date.now()}.jpg`);
+        fs.writeFileSync(tempFilePath, buffer);
+        
+        // Upload to Cloudinary
+        photoResult = await uploadToCloudinary(tempFilePath, "reports");
+        
+        // Clean up temp file
+        fs.unlinkSync(tempFilePath);
+      } catch (error) {
+        console.error('Error processing photo:', error);
+        await sendResponse(psid, { text: "We had trouble processing your photo, but we'll continue with the report." });
+      }
+    }
+    
+    // Get coordinates
+    const location = {
+      address: {
+        streetAddress: reportData.location.address.streetAddress || "Unknown",
+        barangay: reportData.location.address.barangay || "Unknown",
+        city: reportData.location.address.city || "Unknown",
+        zipCode: reportData.location.address.zipCode || "Unknown"
+      }
+    };
+    
+    const geoData = await getCoordinatesFromAddress(location.address);
+    if (!geoData.success) {
+      await sendResponse(psid, { 
+        text: "We couldn't process the location precisely. Please provide more details in the app later."
+      });
+      // Continue with approximate coordinates
+    }
+    
+    // Find police station
+    const coordinates = geoData.success ? geoData.coordinates : [0, 0];
+    const assignedStation = await findPoliceStation(null, coordinates);
+    if (!assignedStation) {
+      return await sendResponse(psid, { 
+        text: "We couldn't find a police station to assign. Please submit your report through the app."
+      });
+    }
+    
+    // Create report
+    const report = new Report({
+      reporter: user._id,
+      type: reportData.type,
+      personInvolved: {
+        firstName: reportData.personInvolved.firstName,
+        lastName: reportData.personInvolved.lastName,
+        age: reportData.personInvolved.age,
+        // Required fields with default values
+        dateOfBirth: new Date(Date.now() - (reportData.personInvolved.age * 365 * 24 * 60 * 60 * 1000)), // Approximate from age
+        lastSeenDate: new Date(),
+        lastSeentime: new Date().toTimeString().substring(0, 5),
+        lastKnownLocation: reportData.location.address.streetAddress,
+        relationship: "Not specified via messenger",
+        mostRecentPhoto: photoResult ? {
+          url: photoResult.url,
+          public_id: photoResult.public_id,
+        } : undefined
+      },
+      location: {
+        type: "Point",
+        coordinates: coordinates,
+        address: location.address
+      },
+      assignedPoliceStation: assignedStation._id,
+      broadcastConsent: true,
+      consentUpdateHistory: [
+        {
+          previousValue: false,
+          newValue: true,
+          updatedBy: user._id,
+          date: new Date(),
+        }
+      ]
+    });
+    
+    await report.save();
+    
+    // Delete session
+    await session.deleteOne();
+    
+    // Confirm to user
+    await sendResponse(psid, { 
+      text: `Thank you. Your report has been submitted successfully!\n\nCase ID: ${report.caseId}\n\nIt has been assigned to ${assignedStation.name}.\n\nYou can view and update this report in the AgapayAlert app.` 
+    });
+    
+  } catch (error) {
+    console.error('Error submitting report:', error);
+    await sendResponse(psid, { 
+      text: "We encountered an error while submitting your report. Please try again or use the AgapayAlert app."
+    });
+  }
+}
+
+async function cancelReport(psid) {
+  // Delete the session
+  await MessengerReportSession.deleteOne({ psid });
+  
+  // Confirm cancellation
+  await sendResponse(psid, { 
+    text: "Your report has been cancelled. How else can I help you?"
+  });
+  
+  // Send report menu again
+  await sendReportMenu(psid);
+}
+
+async function sendReportMenu(psid) {
+  await sendResponse(psid, {
+    attachment: {
+      type: "template",
+      payload: {
+        template_type: "button",
+        text: "What would you like to do?",
+        buttons: [
+          {
+            type: "postback",
+            title: "Create Report",
+            payload: "CREATE_REPORT"
+          },
+          {
+            type: "postback",
+            title: "About Us",
+            payload: "ABOUT_US"
+          },
+          {
+            type: "web_url",
+            url: "https://agapayalert-web.onrender.com/",
+            title: "Visit Website"
+          }
+        ]
+      }
+    }
+  });
+}
+
 
 async function sendResponse(sender_psid, response) {
   try {
