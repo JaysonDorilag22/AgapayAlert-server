@@ -1593,7 +1593,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
       })
       .populate("reporter", "firstName lastName number email address")
       .populate("assignedPoliceStation", "name address contactNumber")
-      .populate("assignedOfficer", "firstName lastName number")
+      .populate("assignedOfficer", "avatar firstName lastName number")
       .select({
         caseId: 1,
         type: 1,
