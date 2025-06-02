@@ -236,7 +236,22 @@ const findPoliceStation = async (selectedId, coordinates) => {
 //     });
 //   }
 // });
-
+const calculateDistance = (coord1, coord2) => {
+  const [lon1, lat1] = coord1;
+  const [lon2, lat2] = coord2;
+  
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const distance = R * c; // Distance in kilometers
+  
+  return distance;
+};
 //create report v2
 exports.createReport = asyncHandler(async (req, res) => {
   try {
@@ -352,18 +367,24 @@ exports.createReport = asyncHandler(async (req, res) => {
 
     // Find available officers
     const availableOfficers = await User.find({
-      policeStation: assignedStation._id,
-      roles: 'police_officer',
-      isOnDuty: true
-    }).populate({
-      path: 'assignedCases',
-      match: { status: { $ne: 'Resolved' } }
-    });
+  policeStation: assignedStation._id,
+  roles: 'police_officer',
+  isOnDuty: true
+});
 
     // Filter officers with less than 3 active cases
-    const eligibleOfficers = availableOfficers.filter(officer => 
-      officer.assignedCases?.length < 3
-    );
+    const eligibleOfficers = [];
+for (const officer of availableOfficers) {
+  const activeCasesCount = await Report.countDocuments({
+    assignedOfficer: officer._id,
+    status: { $ne: 'Resolved' }
+  });
+  
+  if (activeCasesCount < 10) {
+    officer.activeCasesCount = activeCasesCount;
+    eligibleOfficers.push(officer);
+  }
+}
 
     // Find nearest officer
     let nearestOfficer = null;
@@ -415,6 +436,43 @@ exports.createReport = asyncHandler(async (req, res) => {
 
     await report.save();
 
+    // Auto-assign nearest officer if available
+    if (nearestOfficer) {
+  report.assignedOfficer = nearestOfficer.officer._id;
+  report.status = "Assigned";
+  
+  console.log(`Auto-assigned nearest officer: ${nearestOfficer.officer.firstName} ${nearestOfficer.officer.lastName} (${nearestOfficer.distance.toFixed(2)}km away)`);
+} else if (eligibleOfficers.length > 0) {
+  // If no location data for distance calculation, assign to officer with least active cases
+  const leastBusyOfficer = eligibleOfficers.reduce((least, officer) => 
+    (officer.activeCasesCount || 0) < (least.activeCasesCount || 0) ? officer : least
+  );
+  
+  report.assignedOfficer = leastBusyOfficer._id;
+  report.status = "Assigned";
+  
+  console.log(`Auto-assigned least busy officer: ${leastBusyOfficer.firstName} ${leastBusyOfficer.lastName} (${leastBusyOfficer.activeCasesCount || 0} active cases)`);
+} else if (eligibleOfficers.length > 0) {
+      // If no location data for distance calculation, assign to officer with least active cases
+      const leastBusyOfficer = eligibleOfficers.reduce((least, officer) => 
+        (officer.assignedCases?.length || 0) < (least.assignedCases?.length || 0) ? officer : least
+      );
+      
+      report.assignedOfficer = leastBusyOfficer._id;
+      report.status = "Assigned";
+      
+      console.log(`Auto-assigned least busy officer: ${leastBusyOfficer.firstName} ${leastBusyOfficer.lastName} (${leastBusyOfficer.assignedCases?.length || 0} active cases)`);
+      
+      // Add to officer's assigned cases
+      try {
+        await User.findByIdAndUpdate(leastBusyOfficer._id, {
+          $addToSet: { assignedCases: report._id }
+        });
+      } catch (error) {
+        console.error("Error updating officer's assigned cases:", error);
+      }
+    }
+
     // Generate case ID after save
     const prefix = report.type.substring(0, 3).toUpperCase();
     const idSuffix = report._id.toString().slice(-7);
@@ -425,55 +483,73 @@ exports.createReport = asyncHandler(async (req, res) => {
     const notificationPromises = [];
 
     // Notify eligible officers
-    eligibleOfficers.forEach(officer => {
-      if (officer.deviceToken) {
-        notificationPromises.push(
-          Notification.create({
-            recipient: officer._id,
-            type: 'NEW_CASE_AVAILABLE',
-            title: `New ${type} Case Alert`,
-            message: nearestOfficer?.officer._id.equals(officer._id)
-              ? `You are the nearest officer to a new ${type} case`
-              : `New ${type} case assigned to your station`,
-            data: {
-              reportId: report._id,
-              caseId: report.caseId,
-              type: report.type,
-              isNearestOfficer: nearestOfficer?.officer._id.equals(officer._id)
-            }
-          })
-        );
+    // Notify eligible officers
+eligibleOfficers.forEach(officer => {
+  if (officer.deviceToken) {
+    const isAssigned = report.assignedOfficer && report.assignedOfficer.equals(officer._id);
+    const isNearest = nearestOfficer?.officer._id.equals(officer._id);
+    
+    // Different messages based on assignment status
+    let notificationTitle, notificationMessage;
+    if (isAssigned) {
+      notificationTitle = `Case Assigned to You`;
+      notificationMessage = `You have been automatically assigned to a new ${type} case (Case ID: ${report.caseId})`;
+    } else if (isNearest) {
+      notificationTitle = `New ${type} Case Alert`;
+      notificationMessage = `You are the nearest officer to a new ${type} case`;
+    } else {
+      notificationTitle = `New ${type} Case Alert`;
+      notificationMessage = `New ${type} case assigned to your station`;
+    }
 
-        notificationPromises.push(
-          sendOneSignalNotification({
-            include_player_ids: [officer.deviceToken],
-            headings: { en: `New ${type} Case Alert` },
-            contents: { 
-              en: nearestOfficer?.officer._id.equals(officer._id)
-                ? `You are the nearest officer to a new ${type} case`
-                : `New ${type} case assigned to your station`
-            },
-            data: {
-              type: 'NEW_CASE_AVAILABLE',
-              reportId: report._id,
-              caseId: report.caseId,
-              isNearestOfficer: nearestOfficer?.officer._id.equals(officer._id)
-            }
-          })
-        );
-      }
-    });
+    notificationPromises.push(
+      Notification.create({
+        recipient: officer._id,
+        type: isAssigned ? 'CASE_ASSIGNED' : 'NEW_CASE_AVAILABLE',
+        title: notificationTitle,
+        message: notificationMessage,
+        data: {
+          reportId: report._id,
+          caseId: report.caseId,
+          type: report.type,
+          isAssigned: isAssigned,
+          isNearestOfficer: isNearest
+        }
+      })
+    );
 
-    // Notify reporter
+    notificationPromises.push(
+      sendOneSignalNotification({
+        include_player_ids: [officer.deviceToken],
+        headings: { en: notificationTitle },
+        message: notificationMessage, // Changed from 'contents' to 'message'
+        data: {
+          type: isAssigned ? 'CASE_ASSIGNED' : 'NEW_CASE_AVAILABLE',
+          reportId: report._id,
+          caseId: report.caseId,
+          isAssigned: isAssigned,
+          isNearestOfficer: isNearest
+        }
+      })
+    );
+  }
+});
+
+    // Enhanced reporter notification with assignment info
+    const reporterMessage = report.assignedOfficer 
+      ? `Your ${type} report (Case ID: ${report.caseId}) has been created and assigned to ${assignedStation.name}. An officer has been automatically assigned to your case.`
+      : `Your ${type} report (Case ID: ${report.caseId}) has been created and assigned to ${assignedStation.name}`;
+
     notificationPromises.push(
       Notification.create({
         recipient: req.user.id,
         type: "REPORT_CREATED",
         title: "Report Created",
-        message: `Your ${type} report (Case ID: ${report.caseId}) has been created and assigned to ${assignedStation.name}`,
+        message: reporterMessage,
         data: {
           reportId: report._id,
-          caseId: report.caseId
+          caseId: report.caseId,
+          hasAssignedOfficer: !!report.assignedOfficer
         },
       })
     );
@@ -489,6 +565,7 @@ exports.createReport = asyncHandler(async (req, res) => {
     const populatedReport = await Report.findById(report._id)
       .populate("reporter", "firstName lastName")
       .populate("assignedPoliceStation", "name address")
+      .populate("assignedOfficer", "firstName lastName")
       .select({
         type: 1,
         caseId: 1,
@@ -509,7 +586,8 @@ exports.createReport = asyncHandler(async (req, res) => {
         id: o._id,
         name: `${o.firstName} ${o.lastName}`,
         activeCases: o.assignedCases?.length || 0,
-        isNearest: nearestOfficer?.officer._id.equals(o._id)
+        isNearest: nearestOfficer?.officer._id.equals(o._id),
+        isAssigned: report.assignedOfficer && report.assignedOfficer.equals(o._id)
       }))
     });
 
@@ -532,9 +610,23 @@ exports.createReport = asyncHandler(async (req, res) => {
           id: o._id,
           name: `${o.firstName} ${o.lastName}`,
           activeCases: o.assignedCases?.length || 0,
-          isNearest: nearestOfficer?.officer._id.equals(o._id)
+          isNearest: nearestOfficer?.officer._id.equals(o._id),
+          isAssigned: report.assignedOfficer && report.assignedOfficer.equals(o._id)
         })),
-        assignmentType: selectedPoliceStation ? "Manual Selection" : "Automatic Assignment",
+        assignmentInfo: {
+          type: selectedPoliceStation ? "Manual Selection" : "Automatic Assignment",
+          hasAssignedOfficer: !!report.assignedOfficer,
+          assignedOfficer: report.assignedOfficer ? {
+            id: nearestOfficer?.officer._id || eligibleOfficers.find(o => o._id.equals(report.assignedOfficer))?._id,
+            name: nearestOfficer?.officer ? 
+              `${nearestOfficer.officer.firstName} ${nearestOfficer.officer.lastName}` : 
+              eligibleOfficers.find(o => o._id.equals(report.assignedOfficer)) ? 
+                `${eligibleOfficers.find(o => o._id.equals(report.assignedOfficer)).firstName} ${eligibleOfficers.find(o => o._id.equals(report.assignedOfficer)).lastName}` : 
+                'Unknown',
+            distance: nearestOfficer?.distance,
+            assignmentReason: nearestOfficer ? 'Nearest officer' : 'Least busy officer'
+          } : null
+        }
       },
     });
 
@@ -547,7 +639,6 @@ exports.createReport = asyncHandler(async (req, res) => {
     });
   }
 });
-
 // Update a report when it's still pending
 exports.updateReport = asyncHandler(async (req, res) => {
   // Debug logging for received data
@@ -989,7 +1080,17 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
 
 // Get Reports (with filters)
 exports.getReports = asyncHandler(async (req, res) => {
+  console.log('touched getReports endpoint');
   try {
+    console.log('=== GET REPORTS REQUEST ===');
+    console.log('Query params:', req.query);
+    console.log('User info:', {
+      id: req.user._id,
+      roles: req.user.roles,
+      policeStation: req.user.policeStation,
+      address: req.user.address
+    });
+
     const {
       status,
       type,
@@ -1000,6 +1101,8 @@ exports.getReports = asyncHandler(async (req, res) => {
     } = req.query;
     const currentPage = parseInt(page);
     const limitPerPage = parseInt(limit);
+
+    console.log('Pagination params:', { currentPage, limitPerPage });
 
     // Base match stage for the aggregation pipeline
     let matchStage = {};
@@ -1014,20 +1117,20 @@ exports.getReports = asyncHandler(async (req, res) => {
       };
     }
 
+    console.log('Base match stage:', JSON.stringify(matchStage, null, 2));
+
     // Basic authentication check - only authorized roles can view reports
     if (!req.user.roles.some(role => 
       ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
     )) {
+      console.log('❌ Authorization failed - user roles:', req.user.roles);
       return res.status(statusCodes.FORBIDDEN).json({
         success: false,
         msg: "Not authorized to view reports",
       });
     }
 
-    // Additional filter for police officers to see only their assigned reports
-    if (req.user.roles.includes("police_officer")) {
-      matchStage.assignedOfficer = req.user._id;
-    }
+    console.log('✅ Authorization passed');
 
     // Aggregation pipeline
     const pipeline = [
@@ -1061,50 +1164,197 @@ exports.getReports = asyncHandler(async (req, res) => {
       { $unwind: { path: "$assignedOfficer", preserveNullAndEmptyArrays: true } },
     ];
 
-    // For police officers and admins, prioritize their own station's reports
-    if (req.user.roles.includes("police_officer") || req.user.roles.includes("police_admin")) {
+    console.log('Base pipeline stages:', pipeline.length);
+
+    // Enhanced role-based sorting with priority system
+    if (req.user.roles.includes("police_officer")) {
+      console.log('🔵 POLICE OFFICER - Adding priority sorting');
+      console.log('Officer ID:', req.user._id);
+      console.log('Officer station:', req.user.policeStation);
+      
+      // Police Officers: Priority order
+      // 1. Reports assigned to them personally (highest priority)
+      // 2. Reports from their police station
+      // 3. All other reports
+      const priorityStage = {
+        $addFields: {
+          priority: {
+            $cond: [
+              { $eq: ["$assignedOfficer._id", req.user._id] }, 1, // Assigned to them = priority 1
+              {
+                $cond: [
+                  { $eq: ["$assignedPoliceStation._id", req.user.policeStation] }, 2, // Their station = priority 2
+                  3 // Other reports = priority 3
+                ]
+              }
+            ]
+          }
+        }
+      };
+      
+      console.log('Priority stage for officer:', JSON.stringify(priorityStage, null, 2));
+      pipeline.push(priorityStage);
+      pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
+
+    } else if (req.user.roles.includes("police_admin")) {
+      console.log('🟡 POLICE ADMIN - Adding priority sorting');
+      console.log('Admin station:', req.user.policeStation);
+      console.log('Admin city:', req.user.address?.city);
+      
+      // Police Admins: Priority order
+      // 1. Reports from their police station (highest priority)
+      // 2. Reports from their city
+      // 3. All other reports
       if (req.user.policeStation) {
-        pipeline.push({
+        const priorityStage = {
           $addFields: {
-            isOwnStation: {
+            priority: {
               $cond: [
-                { $eq: ["$assignedPoliceStation._id", req.user.policeStation] },
-                -1,  // Their station first
-                1
+                { $eq: ["$assignedPoliceStation._id", req.user.policeStation] }, 1, // Their station = priority 1
+                {
+                  $cond: [
+                    { $eq: ["$assignedPoliceStation.address.city", req.user.address?.city] }, 2, // Their city = priority 2
+                    3 // Other reports = priority 3
+                  ]
+                }
               ]
             }
           }
-        });
-        pipeline.push({ $sort: { isOwnStation: 1, createdAt: -1 } });
+        };
+        
+        console.log('Priority stage for admin:', JSON.stringify(priorityStage, null, 2));
+        pipeline.push(priorityStage);
+        pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
       } else {
+        console.log('⚠️ Police admin has no station assigned - using default sort');
         pipeline.push({ $sort: { createdAt: -1 } });
       }
-    } else {
+
+    } else if (req.user.roles.includes("city_admin")) {
+      console.log('🟢 CITY ADMIN - Adding priority sorting');
+      console.log('City admin city:', req.user.address?.city);
+      
+      // City Admins: Priority order
+      // 1. Reports from their city (highest priority)
+      // 2. All other reports
+      if (req.user.address?.city) {
+        const priorityStage = {
+          $addFields: {
+            priority: {
+              $cond: [
+                { 
+                  $or: [
+                    { $eq: ["$assignedPoliceStation.address.city", req.user.address.city] },
+                    { $eq: ["$location.address.city", req.user.address.city] }
+                  ]
+                }, 1, // Their city = priority 1
+                2 // Other reports = priority 2
+              ]
+            }
+          }
+        };
+        
+        console.log('Priority stage for city admin:', JSON.stringify(priorityStage, null, 2));
+        pipeline.push(priorityStage);
+        pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
+      } else {
+        console.log('⚠️ City admin has no city assigned - using default sort');
+        pipeline.push({ $sort: { createdAt: -1 } });
+      }
+
+    } else if (req.user.roles.includes("super_admin")) {
+      console.log('🔴 SUPER ADMIN - Using default sort');
+      // Super Admins: Just sort by date (they can see everything equally)
       pipeline.push({ $sort: { createdAt: -1 } });
+
+    } else {
+      console.log('🟣 REGULAR USER - Adding priority sorting');
+      console.log('User city:', req.user.address?.city);
+      
+      // Regular users (if any): Priority order
+      // 1. Reports from their city (if they have an address)
+      // 2. All other reports
+      if (req.user.address?.city) {
+        const priorityStage = {
+          $addFields: {
+            priority: {
+              $cond: [
+                { 
+                  $or: [
+                    { $eq: ["$assignedPoliceStation.address.city", req.user.address.city] },
+                    { $eq: ["$location.address.city", req.user.address.city] }
+                  ]
+                }, 1, // Their city = priority 1
+                2 // Other reports = priority 2
+              ]
+            }
+          }
+        };
+        
+        console.log('Priority stage for regular user:', JSON.stringify(priorityStage, null, 2));
+        pipeline.push(priorityStage);
+        pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
+      } else {
+        console.log('⚠️ Regular user has no city - using default sort');
+        pipeline.push({ $sort: { createdAt: -1 } });
+      }
     }
 
     // Pagination
+    console.log('Adding pagination:', { skip: (currentPage - 1) * limitPerPage, limit: limitPerPage });
     pipeline.push({ $skip: (currentPage - 1) * limitPerPage });
     pipeline.push({ $limit: limitPerPage });
 
+    console.log('Final pipeline length:', pipeline.length);
+    console.log('Complete pipeline:', JSON.stringify(pipeline, null, 2));
+
     // Execute the aggregation pipeline
+    console.log('🔄 Executing aggregation pipeline...');
     const reports = await Report.aggregate(pipeline);
+    console.log('✅ Aggregation completed, found reports:', reports.length);
 
     // Get total count for pagination
+    console.log('🔄 Getting total count...');
     const total = await Report.countDocuments(matchStage);
+    console.log('✅ Total reports count:', total);
+
+    // Log first few reports for debugging
+    if (reports.length > 0) {
+      console.log('First report sample:', {
+        id: reports[0]._id,
+        type: reports[0].type,
+        priority: reports[0].priority,
+        assignedStation: reports[0].assignedPoliceStation?.name,
+        assignedOfficer: reports[0].assignedOfficer?.firstName,
+        createdAt: reports[0].createdAt
+      });
+    }
+
+    const responseData = {
+      reports,
+      currentPage,
+      totalPages: Math.ceil(total / limitPerPage),
+      totalReports: total,
+      hasMore: currentPage * limitPerPage < total,
+    };
+
+    console.log('📊 Response metadata:', {
+      currentPage: responseData.currentPage,
+      totalPages: responseData.totalPages,
+      totalReports: responseData.totalReports,
+      hasMore: responseData.hasMore,
+      reportsInResponse: responseData.reports.length
+    });
+
+    console.log('=== GET REPORTS RESPONSE SENT ===');
 
     res.status(statusCodes.OK).json({
       success: true,
-      data: {
-        reports,
-        currentPage,
-        totalPages: Math.ceil(total / limitPerPage),
-        totalReports: total,
-        hasMore: currentPage * limitPerPage < total,
-      },
+      data: responseData,
     });
   } catch (error) {
-    console.error("Error getting reports:", error);
+    console.error('❌ ERROR in getReports:', error);
+    console.error('Error stack:', error.stack);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: "Error retrieving reports",
@@ -1523,7 +1773,6 @@ exports.getUserReports = asyncHandler(async (req, res) => {
 // Get User's Report Details
 
 exports.getUserReportDetails = asyncHandler(async (req, res) => {
-  console.log("touch")
   try {
     const { reportId } = req.params;
     const userId = req.user.id;
@@ -1544,19 +1793,24 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
     ) {
       let query = { _id: reportId };
 
-      if (
-        userRoles.includes("police_officer") ||
-        userRoles.includes("police_admin")
-      ) {
-        query.assignedPoliceStation = req.user.policeStation;
+      // Apply role-based restrictions (removed police station restrictions)
+      if (userRoles.includes("police_officer")) {
+        // Police officers can see ALL reports OR only assigned to them personally
+        // Remove station restriction completely
+        // query.assignedOfficer = req.user._id; // Uncomment if you want officers to only see their assigned cases
+        // No restrictions - officers can see all reports
+      } else if (userRoles.includes("police_admin")) {
+        // Police admins can see ALL reports (removed station restriction)
+        // No restrictions
       } else if (userRoles.includes("city_admin")) {
-        const cityStations = await PoliceStation.find({
-          "address.city": req.user.address.city,
-        });
-        query.assignedPoliceStation = {
-          $in: cityStations.map((station) => station._id),
-        };
+        // City admins can see ALL reports (removed city restriction)
+        // No restrictions
       }
+      // Super admins already have no restrictions
+
+      console.log("Query for report details:", JSON.stringify(query, null, 2));
+      console.log("User policeStation:", req.user.policeStation);
+      console.log("User roles:", userRoles);
 
       // Full details for officers/admins
       report = await Report.findOne(query)
@@ -1570,6 +1824,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
           type: 1,
           personInvolved: 1,
           additionalImages: 1,
+          video: 1,
           location: 1,
           status: 1,
           followUp: 1,
@@ -1578,6 +1833,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
           consentUpdateHistory: 1,
           broadcastHistory: 1,
           publishSchedule: 1,
+          statusHistory: 1,
           createdAt: 1,
           updatedAt: 1,
           reporter: 1,
@@ -1585,8 +1841,8 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
           assignedOfficer: 1,
         });
 
-      // Case 2: Report Owner Access - Limited Details
     } else if (userId) {
+      // Case 2: Report Owner Access - Limited Details
       report = await Report.findOne({
         _id: reportId,
         $or: [{ reporter: userId }, { broadcastConsent: true }]
@@ -1624,6 +1880,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
           mostRecentPhoto: 1
         },
         additionalImages: 1,
+        video: 1,
         location: 1,
         status: 1,
         followUp: 1,
@@ -1634,9 +1891,11 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
         assignedOfficer: 1
       });
     } else {
+      // Case 3: Public Access - Minimal Details
       report = await Report.findOne({
         _id: reportId,
         broadcastConsent: true,
+        isPublished: true
       }).select({
         caseId: 1,
         type: 1,
@@ -1652,9 +1911,16 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
     }
 
     if (!report) {
+      console.log("Report not found or access denied:", {
+        reportId,
+        userId,
+        userRoles,
+        userPoliceStation: req.user.policeStation
+      });
+      
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
-        msg: errorMessages.REPORT_NOT_FOUND,
+        msg: "Report not found or access denied",
       });
     }
 
@@ -1668,7 +1934,8 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
       accessType: userRoles.some(role => ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)) 
         ? "Admin/Officer (Full Access)" 
         : (userId ? "Report Owner (Limited Access)" : "Public (Minimal Access)"),
-      fieldsReturned: Object.keys(report.toObject())
+      assignedStation: report.assignedPoliceStation?._id || report.assignedPoliceStation,
+      userStation: req.user.policeStation
     });
 
     res.status(statusCodes.OK).json({

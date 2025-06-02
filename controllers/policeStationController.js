@@ -11,9 +11,66 @@ exports.createPoliceStation = asyncHandler(async (req, res) => {
   const { name, city, location, address } = req.body;
   const file = req.file;
 
-  let policeStation = await PoliceStation.findOne({ name, city });
-  if (policeStation) {
-    return res.status(statusCodes.CONFLICT).json({ msg: errorMessages.POLICE_STATION_ALREADY_EXISTS });
+  console.log('Creating police station with data:', { name, city, address });
+
+  // Parse address if it's a string
+  let parsedAddress;
+  if (typeof address === 'string') {
+    try {
+      parsedAddress = JSON.parse(address);
+    } catch (error) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Invalid address format. Please provide a valid JSON string or object.',
+      });
+    }
+  } else {
+    parsedAddress = address;
+  }
+
+  console.log('Parsed address:', parsedAddress);
+
+  // Handle city - either by ObjectId or by name
+  let cityId;
+  
+  if (city && city.length === 24) {
+    // Assume it's an ObjectId
+    const cityExists = await City.findById(city);
+    if (!cityExists) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: 'City with provided ID not found',
+      });
+    }
+    cityId = city;
+    console.log('Using existing city by ID:', cityExists.name);
+  } else if (city && typeof city === 'string') {
+    // Try to find city by name, create if not exists
+    let existingCity = await City.findOne({ name: city });
+    
+    if (!existingCity) {
+      console.log('City not found, creating new city:', city);
+      existingCity = new City({ name: city });
+      await existingCity.save();
+      console.log('Created new city:', existingCity);
+    }
+    
+    cityId = existingCity._id;
+    console.log('Using city by name:', existingCity.name, 'ID:', cityId);
+  } else {
+    return res.status(statusCodes.BAD_REQUEST).json({
+      success: false,
+      msg: 'Valid city name or city ID is required',
+    });
+  }
+
+  // Check if police station already exists (by name and city)
+  let existingStation = await PoliceStation.findOne({ name, city: cityId });
+  if (existingStation) {
+    return res.status(statusCodes.CONFLICT).json({ 
+      success: false,
+      msg: errorMessages.POLICE_STATION_ALREADY_EXISTS 
+    });
   }
 
   let image = {
@@ -29,18 +86,54 @@ exports.createPoliceStation = asyncHandler(async (req, res) => {
     };
   }
 
-  policeStation = new PoliceStation({
+  // Handle coordinates - use provided coordinates or geocode from address
+  let coordinates;
+  
+  if (location && location.coordinates && Array.isArray(location.coordinates) && location.coordinates.length === 2) {
+    // Use provided coordinates
+    coordinates = location.coordinates;
+    console.log('Using provided coordinates:', coordinates);
+  } else if (parsedAddress) {
+    // Geocode from address
+    console.log('Geocoding address for police station:', parsedAddress);
+    const geoData = await getCoordinatesFromAddress(parsedAddress);
+    
+    if (!geoData.success) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: `Failed to get coordinates from address: ${geoData.message}`,
+      });
+    }
+    
+    coordinates = geoData.coordinates;
+    console.log('Geocoded coordinates:', coordinates, 'from:', geoData.displayName);
+  } else {
+    return res.status(statusCodes.BAD_REQUEST).json({
+      success: false,
+      msg: 'Either coordinates or a complete address must be provided',
+    });
+  }
+
+  // Validate address fields
+  if (!parsedAddress || !parsedAddress.streetAddress || !parsedAddress.barangay || !parsedAddress.city || !parsedAddress.zipCode) {
+    return res.status(statusCodes.BAD_REQUEST).json({
+      success: false,
+      msg: 'Complete address information is required (streetAddress, barangay, city, zipCode)',
+    });
+  }
+
+  const policeStation = new PoliceStation({
     name,
-    city,
+    city: cityId, // Use the ObjectId
     location: {
       type: 'Point',
-      coordinates: location.coordinates,
+      coordinates: coordinates,
     },
     address: {
-      streetAddress: address.streetAddress,
-      barangay: address.barangay,
-      city: address.city,
-      zipCode: address.zipCode,
+      streetAddress: parsedAddress.streetAddress,
+      barangay: parsedAddress.barangay,
+      city: parsedAddress.city,
+      zipCode: parsedAddress.zipCode,
     },
     image,
   });
@@ -48,9 +141,16 @@ exports.createPoliceStation = asyncHandler(async (req, res) => {
   await policeStation.save();
 
   // Update the city with the new police station
-  await City.findByIdAndUpdate(city, { $push: { policeStations: policeStation._id } });
+  await City.findByIdAndUpdate(cityId, { $push: { policeStations: policeStation._id } });
 
-  res.status(statusCodes.CREATED).json(policeStation);
+  // Populate the city information for the response
+  await policeStation.populate('city');
+
+  res.status(statusCodes.CREATED).json({
+    success: true,
+    data: policeStation,
+    coordinatesSource: location && location.coordinates ? 'provided' : 'geocoded'
+  });
 });
 
 // Get all police stations
@@ -72,40 +172,150 @@ exports.getPoliceStationById = asyncHandler(async (req, res) => {
 });
 
 // Update a police station
+// Update a police station
 exports.updatePoliceStation = asyncHandler(async (req, res) => {
   const { policeStationId } = req.params;
   const { name, city, location, address } = req.body;
   const file = req.file;
 
+  console.log('Updating police station with data:', { name, city, address });
+
   let policeStation = await PoliceStation.findById(policeStationId);
 
   if (!policeStation) {
-    return res.status(statusCodes.NOT_FOUND).json({ msg: errorMessages.POLICE_STATION_NOT_FOUND });
+    return res.status(statusCodes.NOT_FOUND).json({ 
+      success: false,
+      msg: errorMessages.POLICE_STATION_NOT_FOUND 
+    });
   }
 
+  // Update name if provided
   if (name) {
     policeStation.name = name;
   }
+
+  // Handle city update - either by ObjectId or by name
   if (city) {
-    policeStation.city = city;
+    let cityId;
+    
+    if (city && city.length === 24) {
+      // Assume it's an ObjectId
+      const cityExists = await City.findById(city);
+      if (!cityExists) {
+        return res.status(statusCodes.NOT_FOUND).json({
+          success: false,
+          msg: 'City with provided ID not found',
+        });
+      }
+      cityId = city;
+      console.log('Using existing city by ID:', cityExists.name);
+    } else if (city && typeof city === 'string') {
+      // Try to find city by name, create if not exists
+      let existingCity = await City.findOne({ name: city });
+      
+      if (!existingCity) {
+        console.log('City not found, creating new city:', city);
+        existingCity = new City({ name: city });
+        await existingCity.save();
+        console.log('Created new city:', existingCity);
+      }
+      
+      cityId = existingCity._id;
+      console.log('Using city by name:', existingCity.name, 'ID:', cityId);
+    } else {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Valid city name or city ID is required',
+      });
+    }
+
+    // Remove from old city's police stations array
+    if (policeStation.city.toString() !== cityId.toString()) {
+      await City.findByIdAndUpdate(policeStation.city, { 
+        $pull: { policeStations: policeStation._id } 
+      });
+      
+      // Add to new city's police stations array
+      await City.findByIdAndUpdate(cityId, { 
+        $push: { policeStations: policeStation._id } 
+      });
+    }
+
+    policeStation.city = cityId;
   }
-  if (location) {
-    policeStation.location = {
-      type: 'Point',
-      coordinates: location.coordinates,
-    };
-  }
+
+  // Parse address if it's a string
+  let parsedAddress;
   if (address) {
+    if (typeof address === 'string') {
+      try {
+        parsedAddress = JSON.parse(address);
+      } catch (error) {
+        return res.status(statusCodes.BAD_REQUEST).json({
+          success: false,
+          msg: 'Invalid address format. Please provide a valid JSON string or object.',
+        });
+      }
+    } else {
+      parsedAddress = address;
+    }
+
+    console.log('Parsed address for update:', parsedAddress);
+
+    // Validate address fields if provided
+    if (parsedAddress && (!parsedAddress.streetAddress || !parsedAddress.barangay || !parsedAddress.city || !parsedAddress.zipCode)) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: 'Complete address information is required (streetAddress, barangay, city, zipCode)',
+      });
+    }
+  }
+  
+  // Handle location and coordinates updates
+  if (location || parsedAddress) {
+    let coordinates;
+    
+    if (location && location.coordinates && Array.isArray(location.coordinates) && location.coordinates.length === 2) {
+      // Use provided coordinates
+      coordinates = location.coordinates;
+      console.log('Using provided coordinates for update:', coordinates);
+    } else if (parsedAddress) {
+      // Geocode from address if no valid coordinates provided
+      console.log('Geocoding updated address for police station:', parsedAddress);
+      const geoData = await getCoordinatesFromAddress(parsedAddress);
+      
+      if (!geoData.success) {
+        return res.status(statusCodes.BAD_REQUEST).json({
+          success: false,
+          msg: `Failed to get coordinates from address: ${geoData.message}`,
+        });
+      }
+      
+      coordinates = geoData.coordinates;
+      console.log('Geocoded coordinates for update:', coordinates, 'from:', geoData.displayName);
+    }
+    
+    if (coordinates) {
+      policeStation.location = {
+        type: 'Point',
+        coordinates: coordinates,
+      };
+    }
+  }
+  
+  // Update address if provided
+  if (parsedAddress) {
     policeStation.address = {
-      streetAddress: address.streetAddress,
-      barangay: address.barangay,
-      city: address.city,
-      zipCode: address.zipCode,
+      streetAddress: parsedAddress.streetAddress,
+      barangay: parsedAddress.barangay,
+      city: parsedAddress.city,
+      zipCode: parsedAddress.zipCode,
     };
   }
 
+  // Handle image update
   if (file) {
-    // Delete the old image from Cloudinary
+    // Delete the old image from Cloudinary (if not default)
     if (policeStation.image.public_id !== 'default_image') {
       await cloudinary.uploader.destroy(policeStation.image.public_id);
     }
@@ -120,11 +330,21 @@ exports.updatePoliceStation = asyncHandler(async (req, res) => {
 
   await policeStation.save();
 
-  res.status(statusCodes.OK).json(policeStation);
+  // Populate the city information for the response
+  await policeStation.populate('city');
+
+  res.status(statusCodes.OK).json({
+    success: true,
+    data: policeStation,
+    coordinatesSource: (location && location.coordinates) ? 'provided' : 'geocoded',
+    message: 'Police station updated successfully'
+  });
 });
 
 // Delete a police station
 exports.deletePoliceStation = asyncHandler(async (req, res) => {
+  console.log('Deleting police station...');
+  console.log('Request Params:', req.params);
   const { policeStationId } = req.params;
 
   const policeStation = await PoliceStation.findById(policeStationId);
@@ -141,7 +361,7 @@ exports.deletePoliceStation = asyncHandler(async (req, res) => {
   // Remove the police station from the city's policeStations array
   await City.findByIdAndUpdate(policeStation.city, { $pull: { policeStations: policeStation._id } });
 
-  await policeStation.remove();
+  await policeStation.deleteOne();
 
   res.status(statusCodes.OK).json({ msg: 'Police station deleted successfully' });
 });

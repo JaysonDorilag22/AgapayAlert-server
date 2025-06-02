@@ -24,6 +24,7 @@ const alprRoutes = require("./routes/alprRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
 const messengerRoutes = require("./routes/messengerRoutes");
 const emergencyContactRoutes = require("./routes/emergencyContactRoutes");
+const customPostRoutes = require("./routes/customPostRoutes");
 const { initializeMessenger } = require("./controllers/messengerController");
 const { updateAbsentToMissingReports } = require('./controllers/reportController');
 // Load env vars
@@ -101,7 +102,7 @@ app.get("/", (req, res) => {
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/report", reportRoutes);
-app.use("/api/v1/city", cityRoutes);
+app.use("/api/v1/cities", cityRoutes);
 app.use("/api/v1/police-station", policeStationRoutes);
 app.use("/api/v1/finder", finderReportRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
@@ -110,6 +111,7 @@ app.use("/api/v1/alpr", alprRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
 app.use("/api/messenger", messengerRoutes);
 app.use("/api/v1/emergency-contacts", emergencyContactRoutes)
+app.use("/api/v1/custom-posts", customPostRoutes);
 // Error handling
 app.use(errorHandler);
 
