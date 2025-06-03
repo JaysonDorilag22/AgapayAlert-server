@@ -7,7 +7,7 @@ const { getCoordinatesFromAddress } = require("../utils/geocoding");
 const uploadToCloudinary = require("../utils/uploadToCloudinary");
 const { sendEmailNotification, notifyFinderReport, sendOneSignalNotification } = require("../utils/notificationUtils");
 const { getIO, SOCKET_EVENTS } = require("../utils/socketUtils");
-
+const cloudinary = require("cloudinary").v2;
 // Create finder report with images and notify police station
 exports.createFinderReport = asyncHandler(async (req, res) => {
   try {
