@@ -60,4 +60,64 @@ const sendTransferEmailWithAttachments = async (context, recipients, attachments
   }
 };
 
-module.exports = { sendEmail, sendTransferEmailWithAttachments };
+// Add this function for sending archive emails
+const sendArchiveEmail = async (context, recipients, attachments = []) => {
+  try {
+    const templatePath = path.join(__dirname, '..', 'views', 'archiveEmail.ejs');
+    const html = await ejs.renderFile(templatePath, context);
+
+    const mailOptions = {
+      from: process.env.SMTP_FROM_EMAIL || 'no-reply@agapayalert.com',
+      to: recipients.join(', '),
+      subject: `AgapayAlert - Resolved Reports Archive - ${context.totalReports} Reports`,
+      html: html,
+      attachments: attachments
+    };
+
+    await transporter.sendMail(mailOptions);
+    console.log('Archive email sent successfully');
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending archive email:', error);
+    return { 
+      success: false, 
+      error: error.message 
+    };
+  }
+};
+
+// utils/sendEmail.js
+// Add this function for sending archive emails with embedded images
+const sendArchiveEmailWithImages = async (context, recipients, attachments = []) => {
+  try {
+    const templatePath = path.join(__dirname, '..', 'views', 'archiveEmailWithImages.ejs');
+    const html = await ejs.renderFile(templatePath, context);
+
+    const mailOptions = {
+      from: process.env.SMTP_FROM_EMAIL || 'no-reply@agapayalert.com',
+      to: recipients.join(', '),
+      subject: `AgapayAlert - Resolved Reports Archive with Images - ${context.totalReports} Reports`,
+      html: html,
+      attachments: attachments
+    };
+
+    await transporter.sendMail(mailOptions);
+    console.log('Archive email with embedded images sent successfully');
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending archive email with images:', error);
+    return { 
+      success: false, 
+      error: error.message 
+    };
+  }
+};
+
+module.exports = { 
+  sendEmail, 
+  sendTransferEmailWithAttachments, 
+  sendArchiveEmail, 
+  sendArchiveEmailWithImages 
+};

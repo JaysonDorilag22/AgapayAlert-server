@@ -1,0 +1,336 @@
+<!-- views/archiveEmailWithImages.ejs -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reports Archive with Images</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background-color: #27ae60;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px 5px 0 0;
+        }
+        .content {
+            background-color: #f8f9fa;
+            padding: 30px;
+            border-radius: 0 0 5px 5px;
+        }
+        .section {
+            background-color: white;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 5px;
+            border-left: 4px solid #27ae60;
+        }
+        .report-card {
+            background-color: white;
+            margin: 15px 0;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .report-header {
+            background-color: #34495e;
+            color: white;
+            padding: 10px 15px;
+            margin: -20px -20px 15px -20px;
+            border-radius: 8px 8px 0 0;
+            font-weight: bold;
+        }
+        .report-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .info-item {
+            margin: 5px 0;
+        }
+        .label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .value {
+            margin-left: 10px;
+        }
+        .media-section {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 2px dashed #27ae60;
+        }
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 15px 0;
+        }
+        .media-item {
+            text-align: center;
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+        .media-item img {
+            max-width: 100%;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 3px;
+            margin-bottom: 5px;
+        }
+        .media-item video {
+            max-width: 100%;
+            height: 150px;
+            border-radius: 3px;
+        }
+        .media-label {
+            font-size: 12px;
+            color: #666;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        .main-photo {
+            border: 3px solid #e74c3c;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 15px 0;
+        }
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+        }
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #27ae60;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+        .attachment-info {
+            background-color: #e8f5e8;
+            border: 2px dashed #27ae60;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            color: #666;
+            font-size: 12px;
+        }
+        .no-media {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            padding: 20px;
+        }
+        .excel-note {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .excel-note h4 {
+            color: #856404;
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 AgapayAlert - Reports Archive</h1>
+        <h2>Resolved Reports with Images</h2>
+    </div>
+    
+    <div class="content">
+        <div class="section">
+            <h3>📋 Archive Summary</h3>
+            
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-number"><%= totalReports %></div>
+                    <div class="stat-label">Total Reports</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number"><%= totalMediaFiles || 0 %></div>
+                    <div class="stat-label">Media Files</div>
+                </div>
+            </div>
+
+            <div class="info-item">
+                <span class="label">Date Range:</span>
+                <span class="value"><%= dateRange %></span>
+            </div>
+            <div class="info-item">
+                <span class="label">Generated By:</span>
+                <span class="value"><%= generatedBy %></span>
+            </div>
+            <div class="info-item">
+                <span class="label">Generated Date:</span>
+                <span class="value"><%= generatedDate %></span>
+            </div>
+        </div>
+
+        <div class="attachment-info">
+            <div style="font-size: 24px; margin-bottom: 10px;">📎</div>
+            <h3>Attached Excel File</h3>
+            <p><strong>Resolved_Reports_Archive.xlsx</strong> - Complete spreadsheet with all report data</p>
+        </div>
+
+        <div class="excel-note">
+            <h4>📝 Important Note About Excel File:</h4>
+            <p><strong>The Excel file contains only text data and does NOT include images/videos.</strong></p>
+            <p>All media files (photos and videos) are displayed in this email below for your reference. 
+            You can copy and save images directly from this email if needed.</p>
+        </div>
+
+        <div class="section">
+            <h3>📸 Reports with Media Files</h3>
+            <p>Below are all the resolved reports with their associated images and videos:</p>
+        </div>
+
+        <% reports.forEach(function(report, index) { %>
+            <% if (report.hasMedia) { %>
+            <div class="report-card">
+                <div class="report-header">
+                    📋 Case ID: <%= report.caseId %> - <%= report.type %> Report
+                </div>
+                
+                <div class="report-info">
+                    <div>
+                        <div class="info-item">
+                            <span class="label">Person:</span>
+                            <span class="value"><%= report.personName %> (<%= report.age %> years old)</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Reporter:</span>
+                            <span class="value"><%= report.reporterName %></span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Location:</span>
+                            <span class="value"><%= report.location %></span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="info-item">
+                            <span class="label">Last Seen:</span>
+                            <span class="value"><%= report.lastSeenDate %> at <%= report.lastSeenTime %></span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Assigned Station:</span>
+                            <span class="value"><%= report.assignedStation %></span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Resolved Date:</span>
+                            <span class="value"><%= report.resolvedAt %></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="media-section">
+                    <h4>📸 Media Files for this Case:</h4>
+                    
+                    <div class="media-grid">
+                        <% if (report.mainPhoto) { %>
+                        <div class="media-item main-photo">
+                            <img src="<%= report.mainPhoto %>" alt="Main Photo - <%= report.personName %>" 
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                            <div style="display:none; padding: 20px; background: #f0f0f0;">
+                                Image not available
+                            </div>
+                            <div class="media-label">MAIN PHOTO</div>
+                        </div>
+                        <% } %>
+                        
+                        <% if (report.additionalImages && report.additionalImages.length > 0) { %>
+                            <% report.additionalImages.forEach(function(image, imgIndex) { %>
+                            <div class="media-item">
+                                <img src="<%= image.url %>" alt="Additional Image <%= imgIndex + 1 %>" 
+                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                                <div style="display:none; padding: 20px; background: #f0f0f0;">
+                                    Image not available
+                                </div>
+                                <div class="media-label">IMAGE <%= imgIndex + 1 %></div>
+                            </div>
+                            <% }); %>
+                        <% } %>
+                        
+                        <% if (report.video) { %>
+                        <div class="media-item">
+                            <video controls width="200" height="150">
+                                <source src="<%= report.video %>" type="video/mp4">
+                                Your email client doesn't support video playback.
+                            </video>
+                            <div class="media-label">VIDEO EVIDENCE</div>
+                        </div>
+                        <% } %>
+                    </div>
+                </div>
+            </div>
+            <% } %>
+        <% }); %>
+
+        <% if (reports.filter(r => r.hasMedia).length === 0) { %>
+        <div class="no-media">
+            <p>📷 No reports with media files found in this archive.</p>
+        </div>
+        <% } %>
+
+        <div class="section">
+            <h3>📊 Archive Statistics</h3>
+            <ul>
+                <li><strong>Total Reports Archived:</strong> <%= totalReports %></li>
+                <li><strong>Reports with Media:</strong> <%= reports.filter(r => r.hasMedia).length %></li>
+                <li><strong>Reports without Media:</strong> <%= reports.filter(r => !r.hasMedia).length %></li>
+                <li><strong>Total Media Files:</strong> <%= totalMediaFiles %></li>
+                <li><strong>Date Range:</strong> <%= dateRange %></li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h3>⚠️ Important Notes</h3>
+            <ul>
+                <li>All reports included in this archive have been marked as <strong>Archived</strong> in the system</li>
+                <li>The attached Excel file contains complete report data but <strong>excludes images/videos</strong></li>
+                <li>All images and videos are embedded in this email for reference</li>
+                <li>This archive contains sensitive personal information - handle with care</li>
+                <li>Ensure proper data protection measures when storing or sharing this archive</li>
+                <li>You can right-click and save images directly from this email if needed</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p><strong>AgapayAlert System</strong> - Automated Archive Generation</p>
+        <p>&copy; 2024 AgapayAlert. All rights reserved.</p>
+        <p>This is an automated email. Please do not reply to this address.</p>
+    </div>
+</body>
+</html>

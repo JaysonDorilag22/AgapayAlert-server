@@ -74,36 +74,87 @@
             border-radius: 5px;
             border-left: 4px solid #27ae60;
         }
-        .media-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+        .media-table {
+            width: 100%;
+            border-collapse: collapse;
             margin: 15px 0;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .media-item {
+        .media-table th {
+            background-color: #34495e;
+            color: white;
+            padding: 12px;
+            text-align: center;
+            font-weight: bold;
+            border: 1px solid #2c3e50;
+        }
+        .media-table td {
+            padding: 15px;
             text-align: center;
             border: 1px solid #ddd;
-            border-radius: 5px;
-            padding: 10px;
+            vertical-align: middle;
         }
-        .media-item img {
-            max-width: 100%;
+        .media-table tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        .media-table tr:hover {
+            background-color: #e8f4f8;
+        }
+        .media-image {
+            max-width: 200px;
+            max-height: 150px;
+            width: auto;
             height: auto;
-            border-radius: 3px;
+            border-radius: 5px;
+            border: 2px solid #ddd;
+        }
+        .main-photo-image {
+            border-color: #e74c3c;
+            border-width: 3px;
+        }
+        .media-video {
+            width: 200px;
+            height: 120px;
+            border-radius: 5px;
+        }
+        .media-type {
+            font-weight: bold;
+            color: #2c3e50;
+            padding: 5px 10px;
+            border-radius: 15px;
+            display: inline-block;
             margin-bottom: 5px;
         }
-        .media-item video {
-            max-width: 100%;
-            height: auto;
-            border-radius: 3px;
+        .main-photo-type {
+            background-color: #e74c3c;
+            color: white;
         }
-        .media-label {
+        .additional-image-type {
+            background-color: #3498db;
+            color: white;
+        }
+        .video-type {
+            background-color: #9b59b6;
+            color: white;
+        }
+        .media-description {
             font-size: 12px;
             color: #666;
-            font-weight: bold;
+            margin-top: 5px;
         }
-        .main-photo {
-            border: 3px solid #e74c3c;
+        .no-media {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            padding: 20px;
+        }
+        .media-summary {
+            background-color: #e8f5e8;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            border: 1px solid #27ae60;
         }
     </style>
 </head>
@@ -212,46 +263,107 @@
         <!-- Media Attachments Section -->
         <% if (hasMainPhoto || additionalImagesCount > 0 || hasVideo) { %>
         <div class="media-section">
-            <h3>📸 Media Attachments</h3>
-            <p style="color: #27ae60; font-weight: bold;">
-                The following media files are attached to this email:
-            </p>
+            <h3>📸 Media Evidence</h3>
             
-            <div class="media-grid">
-                <!-- Main Photo -->
-                <% if (hasMainPhoto) { %>
-                <div class="media-item main-photo">
-                    <img src="cid:mainPhoto" alt="Main Photo - <%= personName %>" />
-                    <div class="media-label">MAIN PHOTO</div>
-                </div>
-                <% } %>
-                
-                <!-- Additional Images -->
-                <% if (additionalImages && additionalImages.length > 0) { %>
-                    <% additionalImages.forEach(function(image, index) { %>
-                    <div class="media-item">
-                        <img src="cid:additionalImage<%= index + 1 %>" alt="Additional Image <%= index + 1 %>" />
-                        <div class="media-label">IMAGE <%= index + 1 %></div>
-                    </div>
-                    <% }); %>
-                <% } %>
-                
-                <!-- Video -->
-                <% if (hasVideo) { %>
-                <div class="media-item">
-                    <video controls width="200">
-                        <source src="cid:reportVideo" type="video/mp4">
-                        Your email client doesn't support video playback.
-                    </video>
-                    <div class="media-label">VIDEO EVIDENCE</div>
-                </div>
-                <% } %>
+            <div class="media-summary">
+                <strong>📋 Media Files Summary:</strong>
+                <%= hasMainPhoto ? '1 main photo' : 'No main photo' %><%= additionalImagesCount > 0 ? ', ' + additionalImagesCount + ' additional image(s)' : '' %><%= hasVideo ? ', 1 video file' : '' %>
             </div>
             
-            <p style="font-style: italic; color: #666; font-size: 12px;">
-                Media files summary: 
-                <%= hasMainPhoto ? '1 main photo' : 'No main photo' %><%= additionalImagesCount > 0 ? ', ' + additionalImagesCount + ' additional image(s)' : '' %><%= hasVideo ? ', 1 video file' : '' %>
+            <table class="media-table">
+                <thead>
+                    <tr>
+                        <th style="width: 20%;">Media Type</th>
+                        <th style="width: 50%;">Preview</th>
+                        <th style="width: 30%;">Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Main Photo Row -->
+                    <% if (hasMainPhoto) { %>
+                    <tr>
+                        <td>
+                            <div class="media-type main-photo-type">MAIN PHOTO</div>
+                        </td>
+                        <td>
+                            <img src="cid:mainPhoto" 
+                                 alt="Main Photo - <%= personName %>" 
+                                 class="media-image main-photo-image"
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                            <div style="display:none; padding: 20px; background: #f0f0f0; border-radius: 5px;">
+                                📷 Image not available
+                            </div>
+                        </td>
+                        <td>
+                            <strong>Primary identification photo</strong>
+                            <div class="media-description">
+                                Most recent photo of <%= personName %>
+                            </div>
+                        </td>
+                    </tr>
+                    <% } %>
+                    
+                    <!-- Additional Images Rows -->
+                    <% if (additionalImages && additionalImages.length > 0) { %>
+                        <% additionalImages.forEach(function(image, index) { %>
+                        <tr>
+                            <td>
+                                <div class="media-type additional-image-type">IMAGE <%= index + 1 %></div>
+                            </td>
+                            <td>
+                                <img src="cid:additionalImage<%= index + 1 %>" 
+                                     alt="Additional Image <%= index + 1 %>" 
+                                     class="media-image"
+                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                                <div style="display:none; padding: 20px; background: #f0f0f0; border-radius: 5px;">
+                                    📷 Image not available
+                                </div>
+                            </td>
+                            <td>
+                                <strong>Additional evidence photo</strong>
+                                <div class="media-description">
+                                    Supporting image #<%= index + 1 %>
+                                </div>
+                            </td>
+                        </tr>
+                        <% }); %>
+                    <% } %>
+                    
+                    <!-- Video Row -->
+                    <% if (hasVideo) { %>
+                    <tr>
+                        <td>
+                            <div class="media-type video-type">VIDEO</div>
+                        </td>
+                        <td>
+                            <video controls class="media-video">
+                                <source src="cid:reportVideo" type="video/mp4">
+                                <div style="padding: 20px; background: #f0f0f0; border-radius: 5px;">
+                                    🎥 Video playback not supported
+                                </div>
+                            </video>
+                        </td>
+                        <td>
+                            <strong>Video evidence</strong>
+                            <div class="media-description">
+                                Related video documentation
+                            </div>
+                        </td>
+                    </tr>
+                    <% } %>
+                </tbody>
+            </table>
+            
+            <p style="font-style: italic; color: #666; font-size: 12px; margin-top: 15px;">
+                💡 <strong>Note:</strong> All media files are attached to this email for download and archival purposes.
             </p>
+        </div>
+        <% else { %>
+        <div class="media-section">
+            <h3>📸 Media Evidence</h3>
+            <div class="no-media">
+                📷 No media files available for this report
+            </div>
         </div>
         <% } %>
 

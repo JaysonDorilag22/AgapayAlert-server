@@ -226,6 +226,13 @@ const reportSchema = new mongoose.Schema(
         notes: String,
       },
     ],
+    archivedAt: {
+      type: Date,
+    },
+    archivedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
   },
   { timestamps: true }
 );
