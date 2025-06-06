@@ -9,7 +9,7 @@ const reportSchema = new mongoose.Schema(
     },
     caseId: {
       type: String,
-      unique: true
+      unique: true,
     },
     type: {
       type: String,
@@ -92,7 +92,7 @@ const reportSchema = new mongoose.Schema(
       },
       public_id: {
         type: String,
-      }
+      },
     },
 
     location: {
@@ -129,7 +129,7 @@ const reportSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Pending", "Assigned", "Under Investigation", "Resolved"],
+      enum: ["Pending", "Assigned", "Under Investigation", "Resolved", "Transferred"],
       default: "Pending",
     },
 
@@ -204,12 +204,34 @@ const reportSchema = new mongoose.Schema(
         },
       },
     ],
+    transferHistory: [
+      {
+        transferredTo: {
+          type: String,
+          required: true,
+        },
+        department: {
+          type: String,
+          required: true,
+        },
+        transferredBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        transferDate: {
+          type: Date,
+          default: Date.now,
+        },
+        notes: String,
+      },
+    ],
   },
   { timestamps: true }
 );
 
 // Pre-save middleware to generate caseId
-reportSchema.pre('save', async function(next) {
+reportSchema.pre("save", async function (next) {
   if (!this.caseId) {
     const prefix = this.type.substring(0, 3).toUpperCase();
     const idSuffix = this._id.toString().slice(-7);
@@ -223,7 +245,5 @@ reportSchema.index({ broadcastConsent: 1 });
 reportSchema.index({ isPublished: 1 });
 reportSchema.index({ createdAt: -1 });
 reportSchema.index({ caseId: 1 }, { unique: true });
-
-
 
 module.exports = mongoose.model("Report", reportSchema);

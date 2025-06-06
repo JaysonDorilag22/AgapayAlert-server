@@ -12,6 +12,7 @@ const { getCoordinatesFromAddress } = require("../utils/geocoding");
 const { sendOneSignalNotification } = require("../utils/notificationUtils");
 const { isLastSeenMoreThan24Hours } = require("../utils/isLastSeenMoreThan24Hours");
 const { getIO, SOCKET_EVENTS } = require("../utils/socketUtils");
+const { sendTransferEmailWithAttachments } = require("../utils/sendEmail");
 
 // Helper function to find police station
 const findPoliceStation = async (selectedId, coordinates) => {
@@ -1771,7 +1772,6 @@ exports.getUserReports = asyncHandler(async (req, res) => {
 });
 
 // Get User's Report Details
-
 exports.getUserReportDetails = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
@@ -1951,7 +1951,6 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
     });
   }
 });
-
 
 // Search Reports
 exports.searchReports = asyncHandler(async (req, res) => {
@@ -2381,8 +2380,6 @@ exports.searchPublicReports = asyncHandler(async (req, res) => {
   }
 });
 
-
-
 exports.updateAbsentToMissingReports = asyncHandler(async (req, res) => {
   try {
     // Find all Absent reports
@@ -2469,3 +2466,309 @@ exports.updateAbsentToMissingReports = asyncHandler(async (req, res) => {
     });
   }
 });
+
+// controllers/reportController.js
+// Add this new controller function
+// controllers/reportController.js
+exports.transferReport = asyncHandler(async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const { recipientEmail, recipientDepartment, transferNotes } = req.body;
+
+    // Authorization check - only police_admin, city_admin, and super_admin can transfer
+    if (!req.user.roles.some(role => 
+      ["police_admin", "city_admin", "super_admin"].includes(role)
+    )) {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        msg: "Only police admins, city admins, or super admins can transfer reports",
+      });
+    }
+
+    // Validate required fields
+    if (!recipientEmail || !recipientDepartment) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: "Recipient email and department are required",
+      });
+    }
+
+    // Get report with all populated data
+    const report = await Report.findById(reportId)
+      .populate("reporter", "firstName lastName number email address")
+      .populate("assignedPoliceStation", "name address contactNumber")
+      .populate("assignedOfficer", "firstName lastName number email")
+      .populate("broadcastHistory.publishedBy", "firstName lastName")
+      .populate("consentUpdateHistory.updatedBy", "firstName lastName");
+
+    if (!report) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: "Report not found",
+      });
+    }
+
+    // Check if report is already transferred
+    if (report.status === "Transferred") {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: "Report has already been transferred",
+      });
+    }
+
+    // Prepare media attachments for email
+    const emailAttachments = [];
+    
+    // Add main photo if exists
+    if (report.personInvolved.mostRecentPhoto?.url) {
+      emailAttachments.push({
+        filename: `main_photo_${report.caseId}.jpg`,
+        path: report.personInvolved.mostRecentPhoto.url,
+        cid: 'mainPhoto'
+      });
+    }
+
+    // Add additional images if exist
+    if (report.additionalImages?.length > 0) {
+      report.additionalImages.forEach((image, index) => {
+        emailAttachments.push({
+          filename: `additional_image_${index + 1}_${report.caseId}.jpg`,
+          path: image.url,
+          cid: `additionalImage${index + 1}`
+        });
+      });
+    }
+
+    // Add video if exists
+    if (report.video?.url) {
+      emailAttachments.push({
+        filename: `video_${report.caseId}.mp4`,
+        path: report.video.url,
+        cid: 'reportVideo'
+      });
+    }
+
+    // Prepare email context with complete report data
+    const emailContext = {
+      reportId: report._id,
+      caseId: report.caseId,
+      reportType: report.type,
+      transferDate: new Date().toLocaleDateString(),
+      transferredBy: `${req.user.firstName} ${req.user.lastName}`,
+      transferNotes: transferNotes || 'No additional notes provided',
+      recipientDepartment,
+      
+      // Person involved details
+      personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+      personAge: report.personInvolved.age,
+      personGender: report.personInvolved.gender,
+      personAlias: report.personInvolved.alias,
+      lastSeenDate: report.personInvolved.lastSeenDate,
+      lastSeenTime: report.personInvolved.lastSeentime,
+      lastKnownLocation: report.personInvolved.lastKnownLocation,
+      relationship: report.personInvolved.relationship,
+      contactInformation: report.personInvolved.contactInformation,
+      
+      // Reporter details
+      reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+      reporterEmail: report.reporter.email,
+      reporterPhone: report.reporter.number,
+      reporterAddress: report.reporter.address,
+      
+      // Location details
+      location: {
+        streetAddress: report.location.address.streetAddress,
+        barangay: report.location.address.barangay,
+        city: report.location.address.city,
+        zipCode: report.location.address.zipCode
+      },
+      
+      // Station details
+      assignedStation: report.assignedPoliceStation ? {
+        name: report.assignedPoliceStation.name,
+        address: report.assignedPoliceStation.address,
+        contact: report.assignedPoliceStation.contactNumber
+      } : null,
+      
+      // Officer details
+      assignedOfficer: report.assignedOfficer ? {
+        name: `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}`,
+        email: report.assignedOfficer.email,
+        phone: report.assignedOfficer.number
+      } : null,
+      
+      // Case details
+      createdAt: report.createdAt,
+      currentStatus: report.status,
+      followUpNotes: report.followUp || [],
+      statusHistory: report.statusHistory || [],
+      
+      // Additional information
+      personDescription: {
+        height: report.personInvolved.height,
+        weight: report.personInvolved.weight,
+        eyeColor: report.personInvolved.eyeColor,
+        hairColor: report.personInvolved.hairColor,
+        scarsMarksTattoos: report.personInvolved.scarsMarksTattoos,
+        lastKnownClothing: report.personInvolved.lastKnownClothing,
+        medications: report.personInvolved.medications,
+        otherInformation: report.personInvolved.otherInformation
+      },
+      
+      // Media info for template
+      hasMainPhoto: !!report.personInvolved.mostRecentPhoto?.url,
+      additionalImagesCount: report.additionalImages?.length || 0,
+      hasVideo: !!report.video?.url,
+      
+      // Media arrays for template iteration
+      additionalImages: report.additionalImages || [],
+      mainPhotoUrl: report.personInvolved.mostRecentPhoto?.url,
+      videoUrl: report.video?.url
+    };
+
+    // Send transfer email with attachments
+    const emailResult = await sendTransferEmailWithAttachments(
+      emailContext,
+      [recipientEmail],
+      emailAttachments
+    );
+
+    if (!emailResult.success) {
+      return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+        success: false,
+        msg: "Failed to send transfer email",
+        error: emailResult.error
+      });
+    }
+
+    // Update report status and add transfer information
+    report.status = "Transferred";
+    
+    // Add to status history
+    report.statusHistory = report.statusHistory || [];
+    report.statusHistory.push({
+      previousStatus: report.status,
+      newStatus: "Transferred",
+      updatedBy: req.user._id,
+      updatedAt: new Date(),
+      notes: `Transferred to ${recipientDepartment} (${recipientEmail}): ${transferNotes || 'No notes'}`
+    });
+
+    // Add transfer record
+    report.transferHistory = report.transferHistory || [];
+    report.transferHistory.push({
+      transferredTo: recipientEmail,
+      department: recipientDepartment,
+      transferredBy: req.user._id,
+      transferDate: new Date(),
+      notes: transferNotes
+    });
+
+    await report.save();
+
+    // Delete images from Cloudinary
+    const cloudinary = require("cloudinary").v2;
+    const deletePromises = [];
+
+    // Delete main photo
+    if (report.personInvolved.mostRecentPhoto?.public_id) {
+      deletePromises.push(
+        cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id)
+      );
+    }
+
+    // Delete additional images
+    if (report.additionalImages?.length > 0) {
+      report.additionalImages.forEach(image => {
+        if (image.public_id) {
+          deletePromises.push(
+            cloudinary.uploader.destroy(image.public_id)
+          );
+        }
+      });
+    }
+
+    // Delete video
+    if (report.video?.public_id) {
+      deletePromises.push(
+        cloudinary.uploader.destroy(report.video.public_id, { resource_type: "video" })
+      );
+    }
+
+    // Execute all deletions
+    try {
+      await Promise.allSettled(deletePromises);
+      console.log(`Deleted ${deletePromises.length} media files from Cloudinary for report ${report.caseId}`);
+    } catch (cloudinaryError) {
+      console.error("Error deleting media from Cloudinary:", cloudinaryError);
+    }
+
+    // Delete the report from database
+    await Report.findByIdAndDelete(reportId);
+
+    // Notify relevant parties about the transfer
+    const notificationPromises = [];
+
+    // Notify reporter
+    if (report.reporter?.deviceToken) {
+      notificationPromises.push(
+        sendOneSignalNotification({
+          include_player_ids: [report.reporter.deviceToken],
+          headings: { en: "Report Transferred" },
+          contents: {
+            en: `Your report has been transferred to ${recipientDepartment} for further handling.`,
+          },
+          data: {
+            type: "REPORT_TRANSFERRED",
+            reportId: report._id,
+            department: recipientDepartment,
+          },
+        })
+      );
+    }
+
+    // Notify assigned officer if exists
+    if (report.assignedOfficer?.deviceToken) {
+      notificationPromises.push(
+        sendOneSignalNotification({
+          include_player_ids: [report.assignedOfficer.deviceToken],
+          headings: { en: "Case Transferred" },
+          contents: {
+            en: `The case you were handling has been transferred to ${recipientDepartment}.`,
+          },
+          data: {
+            type: "CASE_TRANSFERRED",
+            reportId: report._id,
+            department: recipientDepartment,
+          },
+        })
+      );
+    }
+
+    // Send notifications
+    await Promise.allSettled(notificationPromises);
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: `Report successfully transferred to ${recipientDepartment} and data has been deleted`,
+      data: {
+        transferredTo: recipientEmail,
+        department: recipientDepartment,
+        transferDate: new Date(),
+        emailSent: emailResult.success,
+        mediaFilesDeleted: deletePromises.length,
+        mediaFilesAttached: emailAttachments.length,
+        reportDeleted: true
+      }
+    });
+
+  } catch (error) {
+    console.error("Error transferring report:", error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: "Error transferring report",
+      error: error.message,
+    });
+  }
+});
+

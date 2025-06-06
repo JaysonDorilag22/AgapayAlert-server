@@ -1,0 +1,428 @@
+<!-- views/reportTransferEmail.ejs -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report Transfer - <%= reportType %> Case</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px 5px 0 0;
+        }
+        .content {
+            background-color: #f8f9fa;
+            padding: 30px;
+            border-radius: 0 0 5px 5px;
+        }
+        .section {
+            background-color: white;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 5px;
+            border-left: 4px solid #3498db;
+        }
+        .urgent {
+            border-left-color: #e74c3c;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 15px 0;
+        }
+        .field {
+            margin: 10px 0;
+        }
+        .label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .value {
+            margin-left: 10px;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            color: #666;
+            font-size: 12px;
+        }
+        .status-history {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        .media-section {
+            background-color: white;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 5px;
+            border-left: 4px solid #27ae60;
+        }
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 15px 0;
+        }
+        .media-item {
+            text-align: center;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+        }
+        .media-item img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 3px;
+            margin-bottom: 5px;
+        }
+        .media-item video {
+            max-width: 100%;
+            height: auto;
+            border-radius: 3px;
+        }
+        .media-label {
+            font-size: 12px;
+            color: #666;
+            font-weight: bold;
+        }
+        .main-photo {
+            border: 3px solid #e74c3c;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>AgapayAlert - Report Transfer</h1>
+        <h2><%= reportType %> Case Transfer</h2>
+    </div>
+    
+    <div class="content">
+        <!-- Transfer Information Section -->
+        <div class="section urgent">
+            <h3>🔄 Transfer Information</h3>
+            <div class="field">
+                <span class="label">Transfer Date:</span>
+                <span class="value"><%= transferDate %></span>
+            </div>
+            <div class="field">
+                <span class="label">Transferred By:</span>
+                <span class="value"><%= transferredBy %></span>
+            </div>
+            <div class="field">
+                <span class="label">Recipient Department:</span>
+                <span class="value"><%= recipientDepartment %></span>
+            </div>
+            <% if (transferNotes) { %>
+            <div class="field">
+                <span class="label">Transfer Notes:</span>
+                <div class="value"><%= transferNotes %></div>
+            </div>
+            <% } %>
+        </div>
+
+        <!-- Case Overview Section -->
+        <div class="section">
+            <h3>📋 Case Overview</h3>
+            <div class="grid">
+                <div class="field">
+                    <span class="label">Case ID:</span>
+                    <span class="value"><%= caseId %></span>
+                </div>
+                <div class="field">
+                    <span class="label">Report Type:</span>
+                    <span class="value"><%= reportType %></span>
+                </div>
+                <div class="field">
+                    <span class="label">Current Status:</span>
+                    <span class="value"><%= currentStatus %></span>
+                </div>
+                <div class="field">
+                    <span class="label">Created:</span>
+                    <span class="value"><%= new Date(createdAt).toLocaleDateString() %></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Person Involved Section -->
+        <div class="section">
+            <h3>👤 Person Involved</h3>
+            <div class="grid">
+                <div class="field">
+                    <span class="label">Name:</span>
+                    <span class="value"><%= personName %></span>
+                </div>
+                <div class="field">
+                    <span class="label">Age:</span>
+                    <span class="value"><%= personAge %></span>
+                </div>
+                <% if (personGender) { %>
+                <div class="field">
+                    <span class="label">Gender:</span>
+                    <span class="value"><%= personGender %></span>
+                </div>
+                <% } %>
+                <% if (personAlias) { %>
+                <div class="field">
+                    <span class="label">Alias:</span>
+                    <span class="value"><%= personAlias %></span>
+                </div>
+                <% } %>
+                <div class="field">
+                    <span class="label">Last Seen Date:</span>
+                    <span class="value"><%= new Date(lastSeenDate).toLocaleDateString() %></span>
+                </div>
+                <div class="field">
+                    <span class="label">Last Seen Time:</span>
+                    <span class="value"><%= lastSeenTime %></span>
+                </div>
+            </div>
+            
+            <% if (lastKnownLocation) { %>
+            <div class="field">
+                <span class="label">Last Known Location:</span>
+                <div class="value"><%= lastKnownLocation %></div>
+            </div>
+            <% } %>
+            
+            <% if (relationship) { %>
+            <div class="field">
+                <span class="label">Relationship to Reporter:</span>
+                <span class="value"><%= relationship %></span>
+            </div>
+            <% } %>
+        </div>
+
+        <!-- Media Attachments Section -->
+        <% if (hasMainPhoto || additionalImagesCount > 0 || hasVideo) { %>
+        <div class="media-section">
+            <h3>📸 Media Attachments</h3>
+            <p style="color: #27ae60; font-weight: bold;">
+                The following media files are attached to this email:
+            </p>
+            
+            <div class="media-grid">
+                <!-- Main Photo -->
+                <% if (hasMainPhoto) { %>
+                <div class="media-item main-photo">
+                    <img src="cid:mainPhoto" alt="Main Photo - <%= personName %>" />
+                    <div class="media-label">MAIN PHOTO</div>
+                </div>
+                <% } %>
+                
+                <!-- Additional Images -->
+                <% if (additionalImages && additionalImages.length > 0) { %>
+                    <% additionalImages.forEach(function(image, index) { %>
+                    <div class="media-item">
+                        <img src="cid:additionalImage<%= index + 1 %>" alt="Additional Image <%= index + 1 %>" />
+                        <div class="media-label">IMAGE <%= index + 1 %></div>
+                    </div>
+                    <% }); %>
+                <% } %>
+                
+                <!-- Video -->
+                <% if (hasVideo) { %>
+                <div class="media-item">
+                    <video controls width="200">
+                        <source src="cid:reportVideo" type="video/mp4">
+                        Your email client doesn't support video playback.
+                    </video>
+                    <div class="media-label">VIDEO EVIDENCE</div>
+                </div>
+                <% } %>
+            </div>
+            
+            <p style="font-style: italic; color: #666; font-size: 12px;">
+                Media files summary: 
+                <%= hasMainPhoto ? '1 main photo' : 'No main photo' %><%= additionalImagesCount > 0 ? ', ' + additionalImagesCount + ' additional image(s)' : '' %><%= hasVideo ? ', 1 video file' : '' %>
+            </p>
+        </div>
+        <% } %>
+
+        <!-- Reporter Information Section -->
+        <div class="section">
+            <h3>📱 Reporter Information</h3>
+            <div class="grid">
+                <div class="field">
+                    <span class="label">Name:</span>
+                    <span class="value"><%= reporterName %></span>
+                </div>
+                <div class="field">
+                    <span class="label">Email:</span>
+                    <span class="value"><%= reporterEmail %></span>
+                </div>
+                <% if (reporterPhone) { %>
+                <div class="field">
+                    <span class="label">Phone:</span>
+                    <span class="value"><%= reporterPhone %></span>
+                </div>
+                <% } %>
+            </div>
+            <% if (reporterAddress) { %>
+            <div class="field">
+                <span class="label">Address:</span>
+                <div class="value">
+                    <%= reporterAddress.streetAddress %>, 
+                    <%= reporterAddress.barangay %>, 
+                    <%= reporterAddress.city %>, 
+                    <%= reporterAddress.zipCode %>
+                </div>
+            </div>
+            <% } %>
+        </div>
+
+        <!-- Location Section -->
+        <div class="section">
+            <h3>📍 Incident Location</h3>
+            <div class="field">
+                <span class="label">Address:</span>
+                <div class="value">
+                    <%= location.streetAddress %><br>
+                    <%= location.barangay %>, <%= location.city %><br>
+                    ZIP: <%= location.zipCode %>
+                </div>
+            </div>
+        </div>
+
+        <!-- Physical Description Section -->
+        <% if (personDescription.height || personDescription.weight || personDescription.eyeColor || personDescription.hairColor) { %>
+        <div class="section">
+            <h3>🔍 Physical Description</h3>
+            <div class="grid">
+                <% if (personDescription.height) { %>
+                <div class="field">
+                    <span class="label">Height:</span>
+                    <span class="value"><%= personDescription.height %></span>
+                </div>
+                <% } %>
+                <% if (personDescription.weight) { %>
+                <div class="field">
+                    <span class="label">Weight:</span>
+                    <span class="value"><%= personDescription.weight %></span>
+                </div>
+                <% } %>
+                <% if (personDescription.eyeColor) { %>
+                <div class="field">
+                    <span class="label">Eye Color:</span>
+                    <span class="value"><%= personDescription.eyeColor %></span>
+                </div>
+                <% } %>
+                <% if (personDescription.hairColor) { %>
+                <div class="field">
+                    <span class="label">Hair Color:</span>
+                    <span class="value"><%= personDescription.hairColor %></span>
+                </div>
+                <% } %>
+            </div>
+            
+            <% if (personDescription.scarsMarksTattoos) { %>
+            <div class="field">
+                <span class="label">Scars/Marks/Tattoos:</span>
+                <div class="value"><%= personDescription.scarsMarksTattoos %></div>
+            </div>
+            <% } %>
+            
+            <% if (personDescription.lastKnownClothing) { %>
+            <div class="field">
+                <span class="label">Last Known Clothing:</span>
+                <div class="value"><%= personDescription.lastKnownClothing %></div>
+            </div>
+            <% } %>
+        </div>
+        <% } %>
+
+        <!-- Police Information Section -->
+        <% if (assignedStation) { %>
+        <div class="section">
+            <h3>🏢 Assigned Police Station</h3>
+            <div class="field">
+                <span class="label">Station:</span>
+                <span class="value"><%= assignedStation.name %></span>
+            </div>
+            <% if (assignedStation.contact) { %>
+            <div class="field">
+                <span class="label">Contact:</span>
+                <span class="value"><%= assignedStation.contact %></span>
+            </div>
+            <% } %>
+        </div>
+        <% } %>
+
+        <% if (assignedOfficer) { %>
+        <div class="section">
+            <h3>👮 Assigned Officer</h3>
+            <div class="field">
+                <span class="label">Officer:</span>
+                <span class="value"><%= assignedOfficer.name %></span>
+            </div>
+            <% if (assignedOfficer.email) { %>
+            <div class="field">
+                <span class="label">Email:</span>
+                <span class="value"><%= assignedOfficer.email %></span>
+            </div>
+            <% } %>
+            <% if (assignedOfficer.phone) { %>
+            <div class="field">
+                <span class="label">Phone:</span>
+                <span class="value"><%= assignedOfficer.phone %></span>
+            </div>
+            <% } %>
+        </div>
+        <% } %>
+
+        <!-- Follow-up Notes Section -->
+        <% if (followUpNotes && followUpNotes.length > 0) { %>
+        <div class="section">
+            <h3>📝 Follow-up Notes</h3>
+            <% followUpNotes.forEach(function(note) { %>
+            <div class="field">
+                <span class="label"><%= new Date(note.date || note.updatedAt).toLocaleDateString() %>:</span>
+                <div class="value"><%= note.note %></div>
+            </div>
+            <% }); %>
+        </div>
+        <% } %>
+
+        <!-- Status History Section -->
+        <% if (statusHistory && statusHistory.length > 0) { %>
+        <div class="section">
+            <h3>📊 Status History</h3>
+            <div class="status-history">
+                <% statusHistory.forEach(function(history) { %>
+                <div class="field">
+                    <span class="label"><%= new Date(history.updatedAt).toLocaleDateString() %>:</span>
+                    <span class="value"><%= history.previousStatus %> → <%= history.newStatus %></span>
+                    <% if (history.notes) { %>
+                    <div class="value" style="font-style: italic; margin-left: 20px;"><%= history.notes %></div>
+                    <% } %>
+                </div>
+                <% }); %>
+            </div>
+        </div>
+        <% } %>
+    </div>
+
+    <div class="footer">
+        <p><strong>Important:</strong> This report has been transferred to your department for further handling. 
+        All media files are attached to this email. The original report data has been permanently deleted from AgapayAlert system as per data protection protocols.</p>
+        <p>&copy; 2024 AgapayAlert System - Automated Report Transfer</p>
+        <p>This is an automated email. Please do not reply to this address.</p>
+    </div>
+</body>
+</html>

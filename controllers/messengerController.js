@@ -505,7 +505,6 @@ async function handlePhotoInput(psid, message, session) {
     });
   }
 }
-
 /**
  * Process and upload photo from Messenger to Cloudinary
  * @param {string} photoUrl - URL of the photo from Messenger
@@ -768,7 +767,6 @@ async function sendResponse(sender_psid, response) {
   }
 }
 
-
 // Add this function to your controller
 async function validateReportData(reportData) {
   // Check minimal required fields
@@ -815,6 +813,7 @@ async function validateReportData(reportData) {
     missingFields
   };
 }
+
 exports.sendCustomMessage = async (psid, message) => {
   return await sendResponse(psid, { text: message });
 };

@@ -34,4 +34,30 @@ const sendEmail = async (mailOptions) => {
   }
 };
 
-module.exports = sendEmail;
+const sendTransferEmailWithAttachments = async (context, recipients, attachments = []) => {
+  try {
+    const templatePath = path.join(__dirname, '..', 'views', 'reportTransferEmail.ejs');
+    const html = await ejs.renderFile(templatePath, context);
+
+    const mailOptions = {
+      from: process.env.SMTP_FROM_EMAIL || 'no-reply@agapayalert.com',
+      to: recipients.join(', '),
+      subject: `AgapayAlert - ${context.reportType} Case Transfer - ${context.caseId}`,
+      html: html,
+      attachments: attachments
+    };
+
+    await transporter.sendMail(mailOptions);
+    console.log('Transfer email with attachments sent successfully');
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending transfer email with attachments:', error);
+    return { 
+      success: false, 
+      error: error.message 
+    };
+  }
+};
+
+module.exports = { sendEmail, sendTransferEmailWithAttachments };
