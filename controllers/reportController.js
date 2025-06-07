@@ -857,12 +857,14 @@ exports.updateReport = asyncHandler(async (req, res) => {
 });
 
 //Updating Status of a Report
+//Updating Status of a Report
 exports.updateUserReport = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
     const { status, followUp } = req.body;
     const userId = req.user.id;
 
+    // Validate required inputs
     if (!status && !followUp) {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
@@ -870,24 +872,7 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
       });
     }
 
-    const report = await Report.findById(reportId)
-      .populate("reporter", "deviceToken")
-      .populate("assignedPoliceStation", "_id name")
-      .populate("assignedOfficer", "_id firstName lastName");
-
-    if (!report) {
-      return res.status(statusCodes.NOT_FOUND).json({
-        success: false,
-        msg: "Report not found",
-      });
-    }
-
-    // Initialize followUp array if it doesn't exist
-    if (!report.followUp) {
-      report.followUp = [];
-    }
-
-    // Validate status change
+    // Validate status value if provided
     if (status) {
       const validStatuses = [
         "Pending",
@@ -902,9 +887,43 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
           msg: "Invalid status value",
         });
       }
+    }
 
-      // Update status
-      report.statusHistory = report.statusHistory || []; // Initialize if not exists
+    // Find and validate report
+    const report = await Report.findById(reportId)
+      .populate("reporter", "deviceToken firstName lastName")
+      .populate("assignedPoliceStation", "_id name")
+      .populate("assignedOfficer", "_id firstName lastName");
+
+    if (!report) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: "Report not found",
+      });
+    }
+
+    // Check authorization
+    const isAuthorized = req.user.roles.some(role => 
+      ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
+    );
+
+    if (!isAuthorized) {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        msg: "Not authorized to update this report",
+      });
+    }
+
+    // Initialize arrays if they don't exist
+    if (!report.followUp) {
+      report.followUp = [];
+    }
+    if (!report.statusHistory) {
+      report.statusHistory = [];
+    }
+
+    // Update status if provided
+    if (status && status !== report.status) {
       report.statusHistory.push({
         previousStatus: report.status,
         newStatus: status,
@@ -915,14 +934,15 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
     }
 
     // Add follow-up if provided
-    if (followUp) {
+    if (followUp && followUp.trim()) {
       report.followUp.push({
-        note: followUp,
+        note: followUp.trim(),
         updatedBy: userId,
         updatedAt: new Date()
       });
     }
 
+    // Save the report
     await report.save();
 
     // Get updated report with populated fields
@@ -931,43 +951,83 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
       .populate("assignedPoliceStation", "name")
       .populate("assignedOfficer", "firstName lastName")
       .select({
+        caseId: 1,
         status: 1,
         followUp: 1,
         statusHistory: 1,
-        updatedAt: 1
+        updatedAt: 1,
+        type: 1
       });
 
-    // Handle notifications
-    if (report.reporter?.deviceToken) {
-      await sendOneSignalNotification({
-        include_player_ids: [report.reporter.deviceToken],
-        title: status ? "Report Status Update" : "Follow-up Added",
-        message: status 
-          ? `Your report status has been updated to: ${status}`
-          : "A new follow-up note has been added to your report",
-        data: {
-          type: status ? "STATUS_UPDATED" : "FOLLOWUP_ADDED",
-          reportId: report._id.toString(),
-          status: status || report.status,
-        },
-      });
+    // Handle notifications safely
+    try {
+      if (report.reporter?.deviceToken) {
+        await sendOneSignalNotification({
+          include_player_ids: [report.reporter.deviceToken],
+          headings: { en: status ? "Report Status Update" : "Follow-up Added" },
+          contents: { 
+            en: status 
+              ? `Your report status has been updated to: ${status}`
+              : "A new follow-up note has been added to your report"
+          },
+          data: {
+            type: status ? "STATUS_UPDATED" : "FOLLOWUP_ADDED",
+            reportId: report._id.toString(),
+            status: status || report.status,
+          },
+        });
+      }
+    } catch (notificationError) {
+      console.error("Notification failed:", notificationError);
+      // Don't fail the request if notification fails
     }
 
-    // Emit socket event
-    const io = getIO();
-    io.to(`user_${report.reporter._id}`).emit(SOCKET_EVENTS.REPORT_UPDATED, {
-      report: updatedReport,
-      message: status ? 'Status updated' : 'Follow-up added'
-    });
+    // Emit socket event safely
+    try {
+      const io = getIO();
+      io.to(`user_${report.reporter._id}`).emit(SOCKET_EVENTS.REPORT_UPDATED, {
+        report: updatedReport,
+        message: status ? 'Status updated' : 'Follow-up added'
+      });
+    } catch (socketError) {
+      console.error("Socket emission failed:", socketError);
+      // Don't fail the request if socket fails
+    }
 
     return res.status(statusCodes.OK).json({
       success: true,
       msg: status ? "Report status updated successfully" : "Follow-up added successfully",
-      data: updatedReport
+      data: {
+        report: updatedReport,
+        changes: {
+          statusUpdated: !!status,
+          followUpAdded: !!followUp,
+          previousStatus: status ? report.statusHistory[report.statusHistory.length - 1]?.previousStatus : null,
+          newStatus: status || null
+        }
+      }
     });
 
   } catch (error) {
     console.error("Error updating report:", error);
+    console.error("Error stack:", error.stack);
+    
+    // Check for specific error types
+    if (error.name === 'ValidationError') {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: "Validation error",
+        error: Object.values(error.errors).map(e => e.message).join(', ')
+      });
+    }
+
+    if (error.name === 'CastError') {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: "Invalid report ID format",
+      });
+    }
+
     return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: "Failed to update report",
@@ -2773,10 +2833,294 @@ exports.transferReport = asyncHandler(async (req, res) => {
 });
 
 
+// exports.archiveResolvedReports = asyncHandler(async (req, res) => {
+//   try {
+//     const { recipientEmail, startDate, endDate, includeImages = true } = req.body;
+
+//     // Authorization check - only admins can archive reports
+//     if (!req.user.roles.some(role => 
+//       ["police_admin", "city_admin", "super_admin"].includes(role)
+//     )) {
+//       return res.status(statusCodes.FORBIDDEN).json({
+//         success: false,
+//         msg: "Only admins can archive resolved reports",
+//       });
+//     }
+
+//     // Validate required fields
+//     if (!recipientEmail) {
+//       return res.status(statusCodes.BAD_REQUEST).json({
+//         success: false,
+//         msg: "Recipient email is required",
+//       });
+//     }
+
+//     // Build query for resolved reports
+//     let query = { status: "Resolved" };
+    
+//     if (startDate && endDate) {
+//       query.createdAt = {
+//         $gte: new Date(startDate),
+//         $lte: new Date(endDate)
+//       };
+//     }
+
+//     // Get all resolved reports with populated data
+//     const resolvedReports = await Report.find(query)
+//       .populate("reporter", "firstName lastName number email address")
+//       .populate("assignedPoliceStation", "name address contactNumber")
+//       .populate("assignedOfficer", "firstName lastName number email")
+//       .sort("-createdAt");
+
+//     if (resolvedReports.length === 0) {
+//       return res.status(statusCodes.NOT_FOUND).json({
+//         success: false,
+//         msg: "No resolved reports found for the specified criteria",
+//       });
+//     }
+
+//     console.log(`Found ${resolvedReports.length} resolved reports to archive`);
+
+//     // Create Excel workbook
+//     const ExcelJS = require('exceljs');
+
+//     const workbook = new ExcelJS.Workbook();
+//     const worksheet = workbook.addWorksheet('Resolved Reports');
+
+//     // Define columns (removed photo/video columns, added note column)
+//     worksheet.columns = [
+//       { header: 'Case ID', key: 'caseId', width: 15 },
+//       { header: 'Report Type', key: 'type', width: 15 },
+//       { header: 'Person Name', key: 'personName', width: 25 },
+//       { header: 'Age', key: 'age', width: 10 },
+//       { header: 'Gender', key: 'gender', width: 10 },
+//       { header: 'Last Seen Date', key: 'lastSeenDate', width: 15 },
+//       { header: 'Last Seen Time', key: 'lastSeenTime', width: 15 },
+//       { header: 'Location', key: 'location', width: 30 },
+//       { header: 'Reporter Name', key: 'reporterName', width: 25 },
+//       { header: 'Reporter Email', key: 'reporterEmail', width: 30 },
+//       { header: 'Reporter Phone', key: 'reporterPhone', width: 15 },
+//       { header: 'Assigned Station', key: 'assignedStation', width: 25 },
+//       { header: 'Assigned Officer', key: 'assignedOfficer', width: 25 },
+//       { header: 'Status', key: 'status', width: 15 },
+//       { header: 'Created Date', key: 'createdAt', width: 20 },
+//       { header: 'Resolved Date', key: 'resolvedAt', width: 20 },
+//       { header: 'Media Files Note', key: 'mediaNote', width: 30 },
+//     ];
+
+//     // Style the header row
+//     const headerRow = worksheet.getRow(1);
+//     headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+//     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
+//     headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+//     // Count total media files
+//     let totalMediaFiles = 0;
+
+//     // Process each report
+//     for (let i = 0; i < resolvedReports.length; i++) {
+//       const report = resolvedReports[i];
+      
+//       // Find resolved date from status history
+//       const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
+//       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+
+//       // Count media files for this report
+//       let mediaCount = 0;
+//       let mediaTypes = [];
+      
+//       if (report.personInvolved.mostRecentPhoto?.url) {
+//         mediaCount++;
+//         mediaTypes.push('Main Photo');
+//         totalMediaFiles++;
+//       }
+      
+//       if (report.additionalImages?.length > 0) {
+//         mediaCount += report.additionalImages.length;
+//         mediaTypes.push(`${report.additionalImages.length} Additional Images`);
+//         totalMediaFiles += report.additionalImages.length;
+//       }
+      
+//       if (report.video?.url) {
+//         mediaCount++;
+//         mediaTypes.push('Video');
+//         totalMediaFiles++;
+//       }
+
+//       // Prepare row data
+//       const rowData = {
+//         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+//         type: report.type,
+//         personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+//         age: report.personInvolved.age,
+//         gender: report.personInvolved.gender,
+//         lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
+//         lastSeenTime: report.personInvolved.lastSeentime || '',
+//         location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
+//         reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+//         reporterEmail: report.reporter.email,
+//         reporterPhone: report.reporter.number,
+//         assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
+//         assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
+//         status: report.status,
+//         createdAt: new Date(report.createdAt).toLocaleDateString(),
+//         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
+//         mediaNote: mediaCount > 0 ? 
+//           `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` : 
+//           'No media files'
+//       };
+
+//       // Add row to worksheet
+//       worksheet.addRow(rowData);
+//     }
+
+//     // Add a note at the top about media files
+//     worksheet.insertRow(1, {
+//       caseId: 'NOTE:',
+//       type: 'Media files (photos/videos) are embedded in the email below.',
+//       personName: 'This Excel file contains only text data.',
+//       age: '',
+//       gender: '',
+//       lastSeenDate: '',
+//       lastSeenTime: '',
+//       location: '',
+//       reporterName: '',
+//       reporterEmail: '',
+//       reporterPhone: '',
+//       assignedStation: '',
+//       assignedOfficer: '',
+//       status: '',
+//       createdAt: '',
+//       resolvedAt: '',
+//       mediaNote: 'Check email content for images'
+//     });
+
+//     // Style the note row
+//     const noteRow = worksheet.getRow(1);
+//     noteRow.font = { bold: true, color: { argb: 'FF0000' } };
+//     noteRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF99' } };
+
+//     // Re-style the header row (now row 2)
+//     const newHeaderRow = worksheet.getRow(2);
+//     newHeaderRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+//     newHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
+//     newHeaderRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+//     // Apply alternating row colors (starting from row 3)
+//     worksheet.eachRow((row, rowNumber) => {
+//       if (rowNumber > 2) { // Skip note and header rows
+//         if (rowNumber % 2 === 1) { // Odd rows (excluding header)
+//           row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8F9FA' } };
+//         }
+//       }
+//     });
+
+//     // Auto-fit columns
+//     worksheet.columns.forEach(column => {
+//       column.width = Math.max(column.width, 10);
+//     });
+
+//     // Generate Excel buffer
+//     const excelBuffer = await workbook.xlsx.writeBuffer();
+
+//     // Prepare reports data for email template
+//     const reportsWithMedia = resolvedReports.map(report => {
+//       const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
+//       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+      
+//       return {
+//         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+//         type: report.type,
+//         personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+//         age: report.personInvolved.age,
+//         gender: report.personInvolved.gender,
+//         lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
+//         lastSeenTime: report.personInvolved.lastSeentime || '',
+//         location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
+//         reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+//         reporterEmail: report.reporter.email,
+//         reporterPhone: report.reporter.number,
+//         assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
+//         assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
+//         createdAt: new Date(report.createdAt).toLocaleDateString(),
+//         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
+//         mainPhoto: report.personInvolved.mostRecentPhoto?.url || null,
+//         additionalImages: report.additionalImages || [],
+//         video: report.video?.url || null,
+//         hasMedia: !!(report.personInvolved.mostRecentPhoto?.url || report.additionalImages?.length > 0 || report.video?.url)
+//       };
+//     });
+
+//     // Email context
+//     const emailContext = {
+//       totalReports: resolvedReports.length,
+//       dateRange: startDate && endDate ? `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}` : 'All time',
+//       generatedBy: `${req.user.firstName} ${req.user.lastName}`,
+//       generatedDate: new Date().toLocaleDateString(),
+//       includesImages: includeImages,
+//       totalMediaFiles: totalMediaFiles,
+//       reports: reportsWithMedia
+//     };
+
+//     // Email attachments (only Excel file)
+//     const emailAttachments = [{
+//       filename: `Resolved_Reports_Archive_${new Date().toISOString().split('T')[0]}.xlsx`,
+//       content: excelBuffer,
+//       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+//     }];
+
+//     // Send email
+//     const emailResult = await sendArchiveEmailWithImages(
+//       emailContext,
+//       [recipientEmail],
+//       emailAttachments
+//     );
+
+//     if (!emailResult.success) {
+//       return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//         success: false,
+//         msg: "Failed to send archive email",
+//         error: emailResult.error
+//       });
+//     }
+
+//     // After successful email, update reports status to Archived
+//     await Report.updateMany(
+//       { _id: { $in: resolvedReports.map(r => r._id) } },
+//       { 
+//         status: "Archived",
+//         archivedAt: new Date(),
+//         archivedBy: req.user._id
+//       }
+//     );
+
+//     res.status(statusCodes.OK).json({
+//       success: true,
+//       msg: `Successfully archived ${resolvedReports.length} resolved reports`,
+//       data: {
+//         reportsArchived: resolvedReports.length,
+//         emailSent: emailResult.success,
+//         recipientEmail,
+//         dateRange: emailContext.dateRange,
+//         includesImages: includeImages,
+//         totalMediaFiles: totalMediaFiles,
+//         mediaIncludedInEmail: true
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error("Error archiving resolved reports:", error);
+//     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//       success: false,
+//       msg: "Error archiving resolved reports",
+//       error: error.message,
+//     });
+//   }
+// });
 
 exports.archiveResolvedReports = asyncHandler(async (req, res) => {
   try {
-    const { recipientEmail, startDate, endDate, includeImages = true } = req.body;
+    const { recipientEmail, startDate, endDate, policeStationId, includeImages = true } = req.body;
 
     // Authorization check - only admins can archive reports
     if (!req.user.roles.some(role => 
@@ -2799,11 +3143,26 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     // Build query for resolved reports
     let query = { status: "Resolved" };
     
+    // Add date range filter
     if (startDate && endDate) {
       query.createdAt = {
         $gte: new Date(startDate),
         $lte: new Date(endDate)
       };
+    }
+
+    // Add police station filter
+    if (policeStationId) {
+      // Validate police station exists
+      const policeStation = await PoliceStation.findById(policeStationId);
+      if (!policeStation) {
+        return res.status(statusCodes.NOT_FOUND).json({
+          success: false,
+          msg: "Police station not found",
+        });
+      }
+      
+      query.assignedPoliceStation = policeStationId;
     }
 
     // Get all resolved reports with populated data
@@ -2821,6 +3180,13 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     }
 
     console.log(`Found ${resolvedReports.length} resolved reports to archive`);
+
+    // Get police station name for context (if filtered by station)
+    let policeStationName = null;
+    if (policeStationId) {
+      const station = await PoliceStation.findById(policeStationId);
+      policeStationName = station?.name || 'Unknown Station';
+    }
 
     // Create Excel workbook
     const ExcelJS = require('exceljs');
@@ -2992,10 +3358,11 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
       };
     });
 
-    // Email context
+    // Email context with police station info
     const emailContext = {
       totalReports: resolvedReports.length,
       dateRange: startDate && endDate ? `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}` : 'All time',
+      policeStationFilter: policeStationName || 'All stations',
       generatedBy: `${req.user.firstName} ${req.user.lastName}`,
       generatedDate: new Date().toLocaleDateString(),
       includesImages: includeImages,
@@ -3005,7 +3372,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 
     // Email attachments (only Excel file)
     const emailAttachments = [{
-      filename: `Resolved_Reports_Archive_${new Date().toISOString().split('T')[0]}.xlsx`,
+      filename: `Resolved_Reports_Archive_${policeStationName ? `${policeStationName.replace(/\s+/g, '_')}_` : ''}${new Date().toISOString().split('T')[0]}.xlsx`,
       content: excelBuffer,
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     }];
@@ -3037,12 +3404,13 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 
     res.status(statusCodes.OK).json({
       success: true,
-      msg: `Successfully archived ${resolvedReports.length} resolved reports`,
+      msg: `Successfully archived ${resolvedReports.length} resolved reports${policeStationName ? ` from ${policeStationName}` : ''}`,
       data: {
         reportsArchived: resolvedReports.length,
         emailSent: emailResult.success,
         recipientEmail,
         dateRange: emailContext.dateRange,
+        policeStationFilter: policeStationName || 'All stations',
         includesImages: includeImages,
         totalMediaFiles: totalMediaFiles,
         mediaIncludedInEmail: true
@@ -3058,4 +3426,3 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     });
   }
 });
-
