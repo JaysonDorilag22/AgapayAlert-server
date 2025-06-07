@@ -960,27 +960,19 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
       });
 
     // Handle notifications safely
-    try {
-      if (report.reporter?.deviceToken) {
-        await sendOneSignalNotification({
-          include_player_ids: [report.reporter.deviceToken],
-          headings: { en: status ? "Report Status Update" : "Follow-up Added" },
-          contents: { 
-            en: status 
-              ? `Your report status has been updated to: ${status}`
-              : "A new follow-up note has been added to your report"
-          },
-          data: {
-            type: status ? "STATUS_UPDATED" : "FOLLOWUP_ADDED",
-            reportId: report._id.toString(),
-            status: status || report.status,
-          },
-        });
-      }
-    } catch (notificationError) {
-      console.error("Notification failed:", notificationError);
-      // Don't fail the request if notification fails
-    }
+    if (report.reporter?.deviceToken) 
+      await sendOneSignalNotification({
+        include_player_ids: [report.reporter.deviceToken],
+        title: status ? "Report Status Update" : "Follow-up Added",
+        message: status 
+          ? `Your report status has been updated to: ${status}`
+          : "A new follow-up note has been added to your report",
+        data: {
+          type: status ? "STATUS_UPDATED" : "FOLLOWUP_ADDED",
+          reportId: report._id.toString(),
+          status: status || report.status,
+        },
+      });
 
     // Emit socket event safely
     try {
