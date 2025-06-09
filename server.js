@@ -11,6 +11,7 @@ const connectDB = require('./config/db');
 const errorHandler = require('./middlewares/errorHandler');
 const MongoStore = require('connect-mongo');
 const cron = require('node-cron');
+const mongoose = require('mongoose');
 // Route imports
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
@@ -97,6 +98,99 @@ app.set("views", path.join(__dirname, "views"));
 app.get("/", (req, res) => {
   res.status(200).json({ status: "OK", message: "Server is running" });
 });
+
+// Add MongoDB storage monitoring function
+const getMongoDBStorageInfo = async () => {
+  try {
+    const db = mongoose.connection.db;
+    const admin = db.admin();
+    
+    // Get database stats
+    const dbStats = await db.stats();
+    
+    // Get server status (includes storage info)
+    const serverStatus = await admin.serverStatus();
+    
+    // Calculate storage info
+    const storageInfo = {
+      database: {
+        dataSize: dbStats.dataSize,
+        indexSize: dbStats.indexSize,
+        storageSize: dbStats.storageSize,
+        totalSize: dbStats.dataSize + dbStats.indexSize,
+        collections: dbStats.collections,
+        documents: dbStats.objects,
+        avgObjSize: dbStats.avgObjSize
+      },
+      server: {
+        version: serverStatus.version,
+        uptime: serverStatus.uptime,
+        connections: serverStatus.connections
+      },
+      formatted: {
+        dataSize: (dbStats.dataSize / (1024 * 1024)).toFixed(2) + ' MB',
+        indexSize: (dbStats.indexSize / (1024 * 1024)).toFixed(2) + ' MB',
+        storageSize: (dbStats.storageSize / (1024 * 1024)).toFixed(2) + ' MB',
+        totalSize: ((dbStats.dataSize + dbStats.indexSize) / (1024 * 1024)).toFixed(2) + ' MB'
+      }
+    };
+    
+    return storageInfo;
+  } catch (error) {
+    console.error('Error fetching MongoDB storage info:', error);
+    throw error;
+  }
+};
+
+app.get("/api/v1/storage/info", async (req, res) => {
+  try {
+    const storageInfo = await getMongoDBStorageInfo();
+    res.status(200).json({
+      success: true,
+      data: storageInfo
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch storage information",
+      error: error.message
+    });
+  }
+});
+app.get("/api/v1/storage/capacity", async (req, res) => {
+  try {
+    const storageInfo = await getMongoDBStorageInfo();
+    
+    // MongoDB Atlas free tier limit is 512MB
+    const FREE_TIER_LIMIT = 512 * 1024 * 1024; // 512MB in bytes
+    const currentUsage = storageInfo.database.totalSize;
+    const usagePercentage = ((currentUsage / FREE_TIER_LIMIT) * 100).toFixed(2);
+    
+    const capacityInfo = {
+      currentUsage: currentUsage,
+      currentUsageFormatted: storageInfo.formatted.totalSize,
+      limit: FREE_TIER_LIMIT,
+      limitFormatted: '512 MB',
+      usagePercentage: parseFloat(usagePercentage),
+      remainingSpace: FREE_TIER_LIMIT - currentUsage,
+      remainingSpaceFormatted: ((FREE_TIER_LIMIT - currentUsage) / (1024 * 1024)).toFixed(2) + ' MB',
+      isNearLimit: usagePercentage > 80,
+      isOverLimit: usagePercentage > 100
+    };
+    
+    res.status(200).json({
+      success: true,
+      data: capacityInfo
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch capacity information",
+      error: error.message
+    });
+  }
+});
+
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);

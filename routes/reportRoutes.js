@@ -39,10 +39,10 @@ router.post("/update-absent-to-missing", protect, authorizeRoles(roles.POLICE_OF
 router.post('/broadcast/publish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role,), broadcastController.publishReport);
 router.post('/broadcast/unpublish/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, ), broadcastController.unpublishReport);
 router.get('/broadcast/history/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role), broadcastController.getBroadcastHistory);
-router.post('/transfer/:reportId', protect, authorizeRoles(roles.POLICE_ADMIN.role, roles.SUPER_ADMIN.role),  reportController.transferReport);
+router.post('/transfer/:reportId', protect, authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.SUPER_ADMIN.role),  reportController.transferReport);
 // routes/reportRoutes.js
 // Add this route
-router.post('/archive',  protect,  authorizeRoles(roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role, roles.SUPER_ADMIN.role), reportController.archiveResolvedReports);
+router.post('/archive',  protect,  authorizeRoles(roles.POLICE_OFFICER.role, roles.POLICE_ADMIN.role, roles.CITY_ADMIN.role, roles.SUPER_ADMIN.role), reportController.archiveResolvedReports);
 //for testing purposes
 router.post('/test-admin', protect, broadcastController.testAdminNotification);
 // Add this new route

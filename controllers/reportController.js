@@ -2531,10 +2531,27 @@ exports.transferReport = asyncHandler(async (req, res) => {
     if (!req.user.roles.some(role => 
       ["police_admin", "city_admin", "super_admin"].includes(role)
     )) {
-      return res.status(statusCodes.FORBIDDEN).json({
-        success: false,
-        msg: "Only police admins, city admins, or super admins can transfer reports",
-      });
+      // Check if user is assigned officer for this report
+      const report = await Report.findById(req.params.reportId || req.body.reportId);
+      
+      if (!report) {
+        return res.status(statusCodes.NOT_FOUND).json({
+          success: false,
+          msg: "Report not found",
+        });
+      }
+
+      // Allow if user is the assigned officer or belongs to the assigned police station or is a police officer at the station
+      const isAssignedOfficer = report.assignedOfficer && report.assignedOfficer.toString() === req.user._id.toString();
+      const isStationMember = report.assignedPoliceStation && report.assignedPoliceStation.toString() === req.user.policeStation?.toString();
+      const isPoliceOfficer = req.user.roles.includes("police_officer");
+      
+      if (!isAssignedOfficer && !isStationMember && !isPoliceOfficer) {
+        return res.status(statusCodes.FORBIDDEN).json({
+          success: false,
+          msg: "Only admins, assigned officers, or station police officers can transfer reports",
+        });
+      }
     }
 
     // Validate required fields
@@ -2824,6 +2841,657 @@ exports.transferReport = asyncHandler(async (req, res) => {
   }
 });
 
+exports.archiveResolvedReports = asyncHandler(async (req, res) => {
+  try {
+    const { recipientEmail, startDate, endDate, policeStationId, includeImages = true } = req.body;
+
+    // Authorization check - only admins can archive reports
+    if (!req.user.roles.some(role => 
+      ["police_admin", "city_admin", "super_admin"].includes(role)
+    )) {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        msg: "Only admins can archive resolved reports",
+      });
+    }
+
+    // Validate required fields
+    if (!recipientEmail) {
+      return res.status(statusCodes.BAD_REQUEST).json({
+        success: false,
+        msg: "Recipient email is required",
+      });
+    }
+
+    // Build query for resolved reports
+    let query = { status: "Resolved" };
+    
+    // Add date range filter
+    if (startDate && endDate) {
+      query.createdAt = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Add police station filter
+    if (policeStationId) {
+      // Validate police station exists
+      const policeStation = await PoliceStation.findById(policeStationId);
+      if (!policeStation) {
+        return res.status(statusCodes.NOT_FOUND).json({
+          success: false,
+          msg: "Police station not found",
+        });
+      }
+      
+      query.assignedPoliceStation = policeStationId;
+    }
+
+    // Get all resolved reports with populated data
+    const resolvedReports = await Report.find(query)
+      .populate("reporter", "firstName lastName number email address")
+      .populate("assignedPoliceStation", "name address contactNumber")
+      .populate("assignedOfficer", "firstName lastName number email")
+      .sort("-createdAt");
+
+    if (resolvedReports.length === 0) {
+      return res.status(statusCodes.NOT_FOUND).json({
+        success: false,
+        msg: "No resolved reports found for the specified criteria",
+      });
+    }
+
+    console.log(`Found ${resolvedReports.length} resolved reports to archive`);
+
+    // Get police station name for context (if filtered by station)
+    let policeStationName = null;
+    if (policeStationId) {
+      const station = await PoliceStation.findById(policeStationId);
+      policeStationName = station?.name || 'Unknown Station';
+    }
+
+    // Create Excel workbook
+    const ExcelJS = require('exceljs');
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Resolved Reports');
+
+    // Define columns (removed photo/video columns, added note column)
+    worksheet.columns = [
+      { header: 'Case ID', key: 'caseId', width: 15 },
+      { header: 'Report Type', key: 'type', width: 15 },
+      { header: 'Person Name', key: 'personName', width: 25 },
+      { header: 'Age', key: 'age', width: 10 },
+      { header: 'Gender', key: 'gender', width: 10 },
+      { header: 'Last Seen Date', key: 'lastSeenDate', width: 15 },
+      { header: 'Last Seen Time', key: 'lastSeenTime', width: 15 },
+      { header: 'Location', key: 'location', width: 30 },
+      { header: 'Reporter Name', key: 'reporterName', width: 25 },
+      { header: 'Reporter Email', key: 'reporterEmail', width: 30 },
+      { header: 'Reporter Phone', key: 'reporterPhone', width: 15 },
+      { header: 'Assigned Station', key: 'assignedStation', width: 25 },
+      { header: 'Assigned Officer', key: 'assignedOfficer', width: 25 },
+      { header: 'Status', key: 'status', width: 15 },
+      { header: 'Created Date', key: 'createdAt', width: 20 },
+      { header: 'Resolved Date', key: 'resolvedAt', width: 20 },
+      { header: 'Media Files Note', key: 'mediaNote', width: 30 },
+    ];
+
+    // Style the header row
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
+    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // Count total media files
+    let totalMediaFiles = 0;
+
+    // Process each report
+    for (let i = 0; i < resolvedReports.length; i++) {
+      const report = resolvedReports[i];
+      
+      // Find resolved date from status history
+      const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
+      const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+
+      // Count media files for this report
+      let mediaCount = 0;
+      let mediaTypes = [];
+      
+      if (report.personInvolved.mostRecentPhoto?.url) {
+        mediaCount++;
+        mediaTypes.push('Main Photo');
+        totalMediaFiles++;
+      }
+      
+      if (report.additionalImages?.length > 0) {
+        mediaCount += report.additionalImages.length;
+        mediaTypes.push(`${report.additionalImages.length} Additional Images`);
+        totalMediaFiles += report.additionalImages.length;
+      }
+      
+      if (report.video?.url) {
+        mediaCount++;
+        mediaTypes.push('Video');
+        totalMediaFiles++;
+      }
+
+      // Prepare row data
+      const rowData = {
+        caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+        type: report.type,
+        personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+        age: report.personInvolved.age,
+        gender: report.personInvolved.gender,
+        lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
+        lastSeenTime: report.personInvolved.lastSeentime || '',
+        location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
+        reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+        reporterEmail: report.reporter.email,
+        reporterPhone: report.reporter.number,
+        assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
+        assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
+        status: report.status,
+        createdAt: new Date(report.createdAt).toLocaleDateString(),
+        resolvedAt: new Date(resolvedAt).toLocaleDateString(),
+        mediaNote: mediaCount > 0 ? 
+          `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` : 
+          'No media files'
+      };
+
+      // Add row to worksheet
+      worksheet.addRow(rowData);
+    }
+
+    // Add a note at the top about media files
+    worksheet.insertRow(1, {
+      caseId: 'NOTE:',
+      type: 'Media files (photos/videos) are embedded in the email below.',
+      personName: 'This Excel file contains only text data.',
+      age: '',
+      gender: '',
+      lastSeenDate: '',
+      lastSeenTime: '',
+      location: '',
+      reporterName: '',
+      reporterEmail: '',
+      reporterPhone: '',
+      assignedStation: '',
+      assignedOfficer: '',
+      status: '',
+      createdAt: '',
+      resolvedAt: '',
+      mediaNote: 'Check email content for images'
+    });
+
+    // Style the note row
+    const noteRow = worksheet.getRow(1);
+    noteRow.font = { bold: true, color: { argb: 'FF0000' } };
+    noteRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF99' } };
+
+    // Re-style the header row (now row 2)
+    const newHeaderRow = worksheet.getRow(2);
+    newHeaderRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+    newHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
+    newHeaderRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // Apply alternating row colors (starting from row 3)
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 2) { // Skip note and header rows
+        if (rowNumber % 2 === 1) { // Odd rows (excluding header)
+          row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8F9FA' } };
+        }
+      }
+    });
+
+    // Auto-fit columns
+    worksheet.columns.forEach(column => {
+      column.width = Math.max(column.width, 10);
+    });
+
+    // Generate Excel buffer
+    const excelBuffer = await workbook.xlsx.writeBuffer();
+
+    // Prepare reports data for email template
+    const reportsWithMedia = resolvedReports.map(report => {
+      const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
+      const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+      
+      return {
+        caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+        type: report.type,
+        personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+        age: report.personInvolved.age,
+        gender: report.personInvolved.gender,
+        lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
+        lastSeenTime: report.personInvolved.lastSeentime || '',
+        location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
+        reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+        reporterEmail: report.reporter.email,
+        reporterPhone: report.reporter.number,
+        assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
+        assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
+        createdAt: new Date(report.createdAt).toLocaleDateString(),
+        resolvedAt: new Date(resolvedAt).toLocaleDateString(),
+        mainPhoto: report.personInvolved.mostRecentPhoto?.url || null,
+        additionalImages: report.additionalImages || [],
+        video: report.video?.url || null,
+        hasMedia: !!(report.personInvolved.mostRecentPhoto?.url || report.additionalImages?.length > 0 || report.video?.url)
+      };
+    });
+
+    // Email context with police station info
+    const emailContext = {
+      totalReports: resolvedReports.length,
+      dateRange: startDate && endDate ? `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}` : 'All time',
+      policeStationFilter: policeStationName || 'All stations',
+      generatedBy: `${req.user.firstName} ${req.user.lastName}`,
+      generatedDate: new Date().toLocaleDateString(),
+      includesImages: includeImages,
+      totalMediaFiles: totalMediaFiles,
+      reports: reportsWithMedia
+    };
+
+    // Email attachments (only Excel file)
+    const emailAttachments = [{
+      filename: `Resolved_Reports_Archive_${policeStationName ? `${policeStationName.replace(/\s+/g, '_')}_` : ''}${new Date().toISOString().split('T')[0]}.xlsx`,
+      content: excelBuffer,
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }];
+
+    // Send email
+    const emailResult = await sendArchiveEmailWithImages(
+      emailContext,
+      [recipientEmail],
+      emailAttachments
+    );
+
+    if (!emailResult.success) {
+      return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+        success: false,
+        msg: "Failed to send archive email",
+        error: emailResult.error
+      });
+    }
+
+    // After successful email, delete media from Cloudinary and delete reports
+    const cloudinary = require("cloudinary").v2;
+    const deletePromises = [];
+
+    // Delete all media files from Cloudinary for each report
+    for (const report of resolvedReports) {
+      // Delete main photo
+      if (report.personInvolved.mostRecentPhoto?.public_id) {
+        deletePromises.push(
+          cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id)
+        );
+      }
+
+      // Delete additional images
+      if (report.additionalImages?.length > 0) {
+        report.additionalImages.forEach(image => {
+          if (image.public_id) {
+            deletePromises.push(
+              cloudinary.uploader.destroy(image.public_id)
+            );
+          }
+        });
+      }
+
+      // Delete video
+      if (report.video?.public_id) {
+        deletePromises.push(
+          cloudinary.uploader.destroy(report.video.public_id, { resource_type: "video" })
+        );
+      }
+    }
+
+    // Execute all media deletions
+    try {
+      await Promise.allSettled(deletePromises);
+      console.log(`Deleted ${deletePromises.length} media files from Cloudinary`);
+    } catch (cloudinaryError) {
+      console.error("Error deleting media from Cloudinary:", cloudinaryError);
+    }
+
+    // Delete all reports from database
+    await Report.deleteMany({ _id: { $in: resolvedReports.map(r => r._id) } });
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      msg: `Successfully archived and deleted ${resolvedReports.length} resolved reports${policeStationName ? ` from ${policeStationName}` : ''}`,
+      data: {
+        reportsArchived: resolvedReports.length,
+        reportsDeleted: resolvedReports.length,
+        emailSent: emailResult.success,
+        recipientEmail,
+        dateRange: emailContext.dateRange,
+        policeStationFilter: policeStationName || 'All stations',
+        includesImages: includeImages,
+        totalMediaFiles: totalMediaFiles,
+        mediaFilesDeleted: deletePromises.length,
+        mediaIncludedInEmail: true
+      }
+    });
+
+  } catch (error) {
+    console.error("Error archiving resolved reports:", error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: "Error archiving resolved reports",
+      error: error.message,
+    });
+  }
+});
+// exports.archiveResolvedReports = asyncHandler(async (req, res) => {
+//   try {
+//     const { recipientEmail, startDate, endDate, policeStationId, includeImages = true } = req.body;
+
+//     // Authorization check - only admins can archive reports
+//     if (!req.user.roles.some(role => 
+//       ["police_admin", "city_admin", "super_admin"].includes(role)
+//     )) {
+//       return res.status(statusCodes.FORBIDDEN).json({
+//         success: false,
+//         msg: "Only admins can archive resolved reports",
+//       });
+//     }
+
+//     // Validate required fields
+//     if (!recipientEmail) {
+//       return res.status(statusCodes.BAD_REQUEST).json({
+//         success: false,
+//         msg: "Recipient email is required",
+//       });
+//     }
+
+//     // Build query for resolved reports
+//     let query = { status: "Resolved" };
+    
+//     // Add date range filter
+//     if (startDate && endDate) {
+//       query.createdAt = {
+//         $gte: new Date(startDate),
+//         $lte: new Date(endDate)
+//       };
+//     }
+
+//     // Add police station filter
+//     if (policeStationId) {
+//       // Validate police station exists
+//       const policeStation = await PoliceStation.findById(policeStationId);
+//       if (!policeStation) {
+//         return res.status(statusCodes.NOT_FOUND).json({
+//           success: false,
+//           msg: "Police station not found",
+//         });
+//       }
+      
+//       query.assignedPoliceStation = policeStationId;
+//     }
+
+//     // Get all resolved reports with populated data
+//     const resolvedReports = await Report.find(query)
+//       .populate("reporter", "firstName lastName number email address")
+//       .populate("assignedPoliceStation", "name address contactNumber")
+//       .populate("assignedOfficer", "firstName lastName number email")
+//       .sort("-createdAt");
+
+//     if (resolvedReports.length === 0) {
+//       return res.status(statusCodes.NOT_FOUND).json({
+//         success: false,
+//         msg: "No resolved reports found for the specified criteria",
+//       });
+//     }
+
+//     console.log(`Found ${resolvedReports.length} resolved reports to archive`);
+
+//     // Get police station name for context (if filtered by station)
+//     let policeStationName = null;
+//     if (policeStationId) {
+//       const station = await PoliceStation.findById(policeStationId);
+//       policeStationName = station?.name || 'Unknown Station';
+//     }
+
+//     // Create Excel workbook
+//     const ExcelJS = require('exceljs');
+
+//     const workbook = new ExcelJS.Workbook();
+//     const worksheet = workbook.addWorksheet('Resolved Reports');
+
+//     // Define columns (removed photo/video columns, added note column)
+//     worksheet.columns = [
+//       { header: 'Case ID', key: 'caseId', width: 15 },
+//       { header: 'Report Type', key: 'type', width: 15 },
+//       { header: 'Person Name', key: 'personName', width: 25 },
+//       { header: 'Age', key: 'age', width: 10 },
+//       { header: 'Gender', key: 'gender', width: 10 },
+//       { header: 'Last Seen Date', key: 'lastSeenDate', width: 15 },
+//       { header: 'Last Seen Time', key: 'lastSeenTime', width: 15 },
+//       { header: 'Location', key: 'location', width: 30 },
+//       { header: 'Reporter Name', key: 'reporterName', width: 25 },
+//       { header: 'Reporter Email', key: 'reporterEmail', width: 30 },
+//       { header: 'Reporter Phone', key: 'reporterPhone', width: 15 },
+//       { header: 'Assigned Station', key: 'assignedStation', width: 25 },
+//       { header: 'Assigned Officer', key: 'assignedOfficer', width: 25 },
+//       { header: 'Status', key: 'status', width: 15 },
+//       { header: 'Created Date', key: 'createdAt', width: 20 },
+//       { header: 'Resolved Date', key: 'resolvedAt', width: 20 },
+//       { header: 'Media Files Note', key: 'mediaNote', width: 30 },
+//     ];
+
+//     // Style the header row
+//     const headerRow = worksheet.getRow(1);
+//     headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+//     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
+//     headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+//     // Count total media files
+//     let totalMediaFiles = 0;
+
+//     // Process each report
+//     for (let i = 0; i < resolvedReports.length; i++) {
+//       const report = resolvedReports[i];
+      
+//       // Find resolved date from status history
+//       const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
+//       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+
+//       // Count media files for this report
+//       let mediaCount = 0;
+//       let mediaTypes = [];
+      
+//       if (report.personInvolved.mostRecentPhoto?.url) {
+//         mediaCount++;
+//         mediaTypes.push('Main Photo');
+//         totalMediaFiles++;
+//       }
+      
+//       if (report.additionalImages?.length > 0) {
+//         mediaCount += report.additionalImages.length;
+//         mediaTypes.push(`${report.additionalImages.length} Additional Images`);
+//         totalMediaFiles += report.additionalImages.length;
+//       }
+      
+//       if (report.video?.url) {
+//         mediaCount++;
+//         mediaTypes.push('Video');
+//         totalMediaFiles++;
+//       }
+
+//       // Prepare row data
+//       const rowData = {
+//         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+//         type: report.type,
+//         personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+//         age: report.personInvolved.age,
+//         gender: report.personInvolved.gender,
+//         lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
+//         lastSeenTime: report.personInvolved.lastSeentime || '',
+//         location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
+//         reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+//         reporterEmail: report.reporter.email,
+//         reporterPhone: report.reporter.number,
+//         assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
+//         assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
+//         status: report.status,
+//         createdAt: new Date(report.createdAt).toLocaleDateString(),
+//         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
+//         mediaNote: mediaCount > 0 ? 
+//           `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` : 
+//           'No media files'
+//       };
+
+//       // Add row to worksheet
+//       worksheet.addRow(rowData);
+//     }
+
+//     // Add a note at the top about media files
+//     worksheet.insertRow(1, {
+//       caseId: 'NOTE:',
+//       type: 'Media files (photos/videos) are embedded in the email below.',
+//       personName: 'This Excel file contains only text data.',
+//       age: '',
+//       gender: '',
+//       lastSeenDate: '',
+//       lastSeenTime: '',
+//       location: '',
+//       reporterName: '',
+//       reporterEmail: '',
+//       reporterPhone: '',
+//       assignedStation: '',
+//       assignedOfficer: '',
+//       status: '',
+//       createdAt: '',
+//       resolvedAt: '',
+//       mediaNote: 'Check email content for images'
+//     });
+
+//     // Style the note row
+//     const noteRow = worksheet.getRow(1);
+//     noteRow.font = { bold: true, color: { argb: 'FF0000' } };
+//     noteRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF99' } };
+
+//     // Re-style the header row (now row 2)
+//     const newHeaderRow = worksheet.getRow(2);
+//     newHeaderRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+//     newHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
+//     newHeaderRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+//     // Apply alternating row colors (starting from row 3)
+//     worksheet.eachRow((row, rowNumber) => {
+//       if (rowNumber > 2) { // Skip note and header rows
+//         if (rowNumber % 2 === 1) { // Odd rows (excluding header)
+//           row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8F9FA' } };
+//         }
+//       }
+//     });
+
+//     // Auto-fit columns
+//     worksheet.columns.forEach(column => {
+//       column.width = Math.max(column.width, 10);
+//     });
+
+//     // Generate Excel buffer
+//     const excelBuffer = await workbook.xlsx.writeBuffer();
+
+//     // Prepare reports data for email template
+//     const reportsWithMedia = resolvedReports.map(report => {
+//       const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
+//       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+      
+//       return {
+//         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+//         type: report.type,
+//         personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+//         age: report.personInvolved.age,
+//         gender: report.personInvolved.gender,
+//         lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
+//         lastSeenTime: report.personInvolved.lastSeentime || '',
+//         location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
+//         reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+//         reporterEmail: report.reporter.email,
+//         reporterPhone: report.reporter.number,
+//         assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
+//         assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
+//         createdAt: new Date(report.createdAt).toLocaleDateString(),
+//         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
+//         mainPhoto: report.personInvolved.mostRecentPhoto?.url || null,
+//         additionalImages: report.additionalImages || [],
+//         video: report.video?.url || null,
+//         hasMedia: !!(report.personInvolved.mostRecentPhoto?.url || report.additionalImages?.length > 0 || report.video?.url)
+//       };
+//     });
+
+//     // Email context with police station info
+//     const emailContext = {
+//       totalReports: resolvedReports.length,
+//       dateRange: startDate && endDate ? `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}` : 'All time',
+//       policeStationFilter: policeStationName || 'All stations',
+//       generatedBy: `${req.user.firstName} ${req.user.lastName}`,
+//       generatedDate: new Date().toLocaleDateString(),
+//       includesImages: includeImages,
+//       totalMediaFiles: totalMediaFiles,
+//       reports: reportsWithMedia
+//     };
+
+//     // Email attachments (only Excel file)
+//     const emailAttachments = [{
+//       filename: `Resolved_Reports_Archive_${policeStationName ? `${policeStationName.replace(/\s+/g, '_')}_` : ''}${new Date().toISOString().split('T')[0]}.xlsx`,
+//       content: excelBuffer,
+//       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+//     }];
+
+//     // Send email
+//     const emailResult = await sendArchiveEmailWithImages(
+//       emailContext,
+//       [recipientEmail],
+//       emailAttachments
+//     );
+
+//     if (!emailResult.success) {
+//       return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//         success: false,
+//         msg: "Failed to send archive email",
+//         error: emailResult.error
+//       });
+//     }
+
+//     // After successful email, update reports status to Archived
+//     await Report.updateMany(
+//       { _id: { $in: resolvedReports.map(r => r._id) } },
+//       { 
+//         status: "Archived",
+//         archivedAt: new Date(),
+//         archivedBy: req.user._id
+//       }
+//     );
+
+//     res.status(statusCodes.OK).json({
+//       success: true,
+//       msg: `Successfully archived ${resolvedReports.length} resolved reports${policeStationName ? ` from ${policeStationName}` : ''}`,
+//       data: {
+//         reportsArchived: resolvedReports.length,
+//         emailSent: emailResult.success,
+//         recipientEmail,
+//         dateRange: emailContext.dateRange,
+//         policeStationFilter: policeStationName || 'All stations',
+//         includesImages: includeImages,
+//         totalMediaFiles: totalMediaFiles,
+//         mediaIncludedInEmail: true
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error("Error archiving resolved reports:", error);
+//     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//       success: false,
+//       msg: "Error archiving resolved reports",
+//       error: error.message,
+//     });
+//   }
+// });
 
 // exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //   try {
@@ -3110,311 +3778,4 @@ exports.transferReport = asyncHandler(async (req, res) => {
 //   }
 // });
 
-exports.archiveResolvedReports = asyncHandler(async (req, res) => {
-  try {
-    const { recipientEmail, startDate, endDate, policeStationId, includeImages = true } = req.body;
 
-    // Authorization check - only admins can archive reports
-    if (!req.user.roles.some(role => 
-      ["police_admin", "city_admin", "super_admin"].includes(role)
-    )) {
-      return res.status(statusCodes.FORBIDDEN).json({
-        success: false,
-        msg: "Only admins can archive resolved reports",
-      });
-    }
-
-    // Validate required fields
-    if (!recipientEmail) {
-      return res.status(statusCodes.BAD_REQUEST).json({
-        success: false,
-        msg: "Recipient email is required",
-      });
-    }
-
-    // Build query for resolved reports
-    let query = { status: "Resolved" };
-    
-    // Add date range filter
-    if (startDate && endDate) {
-      query.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
-    }
-
-    // Add police station filter
-    if (policeStationId) {
-      // Validate police station exists
-      const policeStation = await PoliceStation.findById(policeStationId);
-      if (!policeStation) {
-        return res.status(statusCodes.NOT_FOUND).json({
-          success: false,
-          msg: "Police station not found",
-        });
-      }
-      
-      query.assignedPoliceStation = policeStationId;
-    }
-
-    // Get all resolved reports with populated data
-    const resolvedReports = await Report.find(query)
-      .populate("reporter", "firstName lastName number email address")
-      .populate("assignedPoliceStation", "name address contactNumber")
-      .populate("assignedOfficer", "firstName lastName number email")
-      .sort("-createdAt");
-
-    if (resolvedReports.length === 0) {
-      return res.status(statusCodes.NOT_FOUND).json({
-        success: false,
-        msg: "No resolved reports found for the specified criteria",
-      });
-    }
-
-    console.log(`Found ${resolvedReports.length} resolved reports to archive`);
-
-    // Get police station name for context (if filtered by station)
-    let policeStationName = null;
-    if (policeStationId) {
-      const station = await PoliceStation.findById(policeStationId);
-      policeStationName = station?.name || 'Unknown Station';
-    }
-
-    // Create Excel workbook
-    const ExcelJS = require('exceljs');
-
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Resolved Reports');
-
-    // Define columns (removed photo/video columns, added note column)
-    worksheet.columns = [
-      { header: 'Case ID', key: 'caseId', width: 15 },
-      { header: 'Report Type', key: 'type', width: 15 },
-      { header: 'Person Name', key: 'personName', width: 25 },
-      { header: 'Age', key: 'age', width: 10 },
-      { header: 'Gender', key: 'gender', width: 10 },
-      { header: 'Last Seen Date', key: 'lastSeenDate', width: 15 },
-      { header: 'Last Seen Time', key: 'lastSeenTime', width: 15 },
-      { header: 'Location', key: 'location', width: 30 },
-      { header: 'Reporter Name', key: 'reporterName', width: 25 },
-      { header: 'Reporter Email', key: 'reporterEmail', width: 30 },
-      { header: 'Reporter Phone', key: 'reporterPhone', width: 15 },
-      { header: 'Assigned Station', key: 'assignedStation', width: 25 },
-      { header: 'Assigned Officer', key: 'assignedOfficer', width: 25 },
-      { header: 'Status', key: 'status', width: 15 },
-      { header: 'Created Date', key: 'createdAt', width: 20 },
-      { header: 'Resolved Date', key: 'resolvedAt', width: 20 },
-      { header: 'Media Files Note', key: 'mediaNote', width: 30 },
-    ];
-
-    // Style the header row
-    const headerRow = worksheet.getRow(1);
-    headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
-    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
-    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
-
-    // Count total media files
-    let totalMediaFiles = 0;
-
-    // Process each report
-    for (let i = 0; i < resolvedReports.length; i++) {
-      const report = resolvedReports[i];
-      
-      // Find resolved date from status history
-      const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
-      const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
-
-      // Count media files for this report
-      let mediaCount = 0;
-      let mediaTypes = [];
-      
-      if (report.personInvolved.mostRecentPhoto?.url) {
-        mediaCount++;
-        mediaTypes.push('Main Photo');
-        totalMediaFiles++;
-      }
-      
-      if (report.additionalImages?.length > 0) {
-        mediaCount += report.additionalImages.length;
-        mediaTypes.push(`${report.additionalImages.length} Additional Images`);
-        totalMediaFiles += report.additionalImages.length;
-      }
-      
-      if (report.video?.url) {
-        mediaCount++;
-        mediaTypes.push('Video');
-        totalMediaFiles++;
-      }
-
-      // Prepare row data
-      const rowData = {
-        caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
-        type: report.type,
-        personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
-        age: report.personInvolved.age,
-        gender: report.personInvolved.gender,
-        lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
-        lastSeenTime: report.personInvolved.lastSeentime || '',
-        location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
-        reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
-        reporterEmail: report.reporter.email,
-        reporterPhone: report.reporter.number,
-        assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
-        assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
-        status: report.status,
-        createdAt: new Date(report.createdAt).toLocaleDateString(),
-        resolvedAt: new Date(resolvedAt).toLocaleDateString(),
-        mediaNote: mediaCount > 0 ? 
-          `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` : 
-          'No media files'
-      };
-
-      // Add row to worksheet
-      worksheet.addRow(rowData);
-    }
-
-    // Add a note at the top about media files
-    worksheet.insertRow(1, {
-      caseId: 'NOTE:',
-      type: 'Media files (photos/videos) are embedded in the email below.',
-      personName: 'This Excel file contains only text data.',
-      age: '',
-      gender: '',
-      lastSeenDate: '',
-      lastSeenTime: '',
-      location: '',
-      reporterName: '',
-      reporterEmail: '',
-      reporterPhone: '',
-      assignedStation: '',
-      assignedOfficer: '',
-      status: '',
-      createdAt: '',
-      resolvedAt: '',
-      mediaNote: 'Check email content for images'
-    });
-
-    // Style the note row
-    const noteRow = worksheet.getRow(1);
-    noteRow.font = { bold: true, color: { argb: 'FF0000' } };
-    noteRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF99' } };
-
-    // Re-style the header row (now row 2)
-    const newHeaderRow = worksheet.getRow(2);
-    newHeaderRow.font = { bold: true, color: { argb: 'FFFFFF' } };
-    newHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
-    newHeaderRow.alignment = { horizontal: 'center', vertical: 'middle' };
-
-    // Apply alternating row colors (starting from row 3)
-    worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber > 2) { // Skip note and header rows
-        if (rowNumber % 2 === 1) { // Odd rows (excluding header)
-          row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8F9FA' } };
-        }
-      }
-    });
-
-    // Auto-fit columns
-    worksheet.columns.forEach(column => {
-      column.width = Math.max(column.width, 10);
-    });
-
-    // Generate Excel buffer
-    const excelBuffer = await workbook.xlsx.writeBuffer();
-
-    // Prepare reports data for email template
-    const reportsWithMedia = resolvedReports.map(report => {
-      const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
-      const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
-      
-      return {
-        caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
-        type: report.type,
-        personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
-        age: report.personInvolved.age,
-        gender: report.personInvolved.gender,
-        lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
-        lastSeenTime: report.personInvolved.lastSeentime || '',
-        location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
-        reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
-        reporterEmail: report.reporter.email,
-        reporterPhone: report.reporter.number,
-        assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
-        assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
-        createdAt: new Date(report.createdAt).toLocaleDateString(),
-        resolvedAt: new Date(resolvedAt).toLocaleDateString(),
-        mainPhoto: report.personInvolved.mostRecentPhoto?.url || null,
-        additionalImages: report.additionalImages || [],
-        video: report.video?.url || null,
-        hasMedia: !!(report.personInvolved.mostRecentPhoto?.url || report.additionalImages?.length > 0 || report.video?.url)
-      };
-    });
-
-    // Email context with police station info
-    const emailContext = {
-      totalReports: resolvedReports.length,
-      dateRange: startDate && endDate ? `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}` : 'All time',
-      policeStationFilter: policeStationName || 'All stations',
-      generatedBy: `${req.user.firstName} ${req.user.lastName}`,
-      generatedDate: new Date().toLocaleDateString(),
-      includesImages: includeImages,
-      totalMediaFiles: totalMediaFiles,
-      reports: reportsWithMedia
-    };
-
-    // Email attachments (only Excel file)
-    const emailAttachments = [{
-      filename: `Resolved_Reports_Archive_${policeStationName ? `${policeStationName.replace(/\s+/g, '_')}_` : ''}${new Date().toISOString().split('T')[0]}.xlsx`,
-      content: excelBuffer,
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    }];
-
-    // Send email
-    const emailResult = await sendArchiveEmailWithImages(
-      emailContext,
-      [recipientEmail],
-      emailAttachments
-    );
-
-    if (!emailResult.success) {
-      return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
-        success: false,
-        msg: "Failed to send archive email",
-        error: emailResult.error
-      });
-    }
-
-    // After successful email, update reports status to Archived
-    await Report.updateMany(
-      { _id: { $in: resolvedReports.map(r => r._id) } },
-      { 
-        status: "Archived",
-        archivedAt: new Date(),
-        archivedBy: req.user._id
-      }
-    );
-
-    res.status(statusCodes.OK).json({
-      success: true,
-      msg: `Successfully archived ${resolvedReports.length} resolved reports${policeStationName ? ` from ${policeStationName}` : ''}`,
-      data: {
-        reportsArchived: resolvedReports.length,
-        emailSent: emailResult.success,
-        recipientEmail,
-        dateRange: emailContext.dateRange,
-        policeStationFilter: policeStationName || 'All stations',
-        includesImages: includeImages,
-        totalMediaFiles: totalMediaFiles,
-        mediaIncludedInEmail: true
-      }
-    });
-
-  } catch (error) {
-    console.error("Error archiving resolved reports:", error);
-    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
-      success: false,
-      msg: "Error archiving resolved reports",
-      error: error.message,
-    });
-  }
-});
