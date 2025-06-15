@@ -640,6 +640,8 @@ eligibleOfficers.forEach(officer => {
     });
   }
 });
+
+
 // Update a report when it's still pending
 exports.updateReport = asyncHandler(async (req, res) => {
   // Debug logging for received data
