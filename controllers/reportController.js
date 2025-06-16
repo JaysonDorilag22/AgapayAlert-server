@@ -1828,15 +1828,10 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
 
       // Apply role-based restrictions (removed police station restrictions)
       if (userRoles.includes("police_officer")) {
-        // Police officers can see ALL reports OR only assigned to them personally
-        // Remove station restriction completely
-        // query.assignedOfficer = req.user._id; // Uncomment if you want officers to only see their assigned cases
         // No restrictions - officers can see all reports
       } else if (userRoles.includes("police_admin")) {
-        // Police admins can see ALL reports (removed station restriction)
         // No restrictions
       } else if (userRoles.includes("city_admin")) {
-        // City admins can see ALL reports (removed city restriction)
         // No restrictions
       }
       // Super admins already have no restrictions
@@ -1872,6 +1867,15 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
           reporter: 1,
           assignedPoliceStation: 1,
           assignedOfficer: 1,
+          stationAssignmentType: 1, 
+          anonymousReporter: 1,
+          validCredential: 1,
+          isAnonymous: 1,
+          messengerPSID: 1,
+          reportSource: 1, // Added reportSource field
+          messengerDescription: 1, // Added to show description from messenger
+          credential: 1, // Added to show credentials info
+          validIdSubmitted: 1, // Added valid ID status
         });
     } else if (userId) {
       // Case 2: Report Owner Access - Limited Details
@@ -1921,6 +1925,11 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
           updatedAt: 1,
           assignedPoliceStation: 1,
           assignedOfficer: 1,
+          stationAssignmentType: 1,
+          isAnonymous: 1,
+          reportSource: 1, // Added reportSource field
+          messengerDescription: 1, // Added messenger description
+          validIdSubmitted: 1, // Added ID verification status
         });
     } else {
       // Case 3: Public Access - Minimal Details
@@ -1939,6 +1948,8 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
         "personInvolved.mostRecentPhoto": 1,
         "location.address": 1,
         createdAt: 1,
+        isAnonymous: 1,
+        reportSource: 1, // Added reportSource field
       });
     }
 
@@ -1962,6 +1973,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
       reportId: report._id,
       caseId: report.caseId,
       reportType: report.type,
+      reportSource: report.reportSource, // Log the report source
       userRole: userRoles[0],
       accessType: userRoles.some((role) =>
         ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
