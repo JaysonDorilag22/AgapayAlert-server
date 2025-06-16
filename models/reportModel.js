@@ -261,8 +261,8 @@ const reportSchema = new mongoose.Schema(
     // Information about how the police station was assigned
     stationAssignmentType: {
       type: String,
-      enum: ["MANUAL", "AUTO_NEARBY", "AUTO_FALLBACK", "ADMIN_ASSIGNED"],
-      default: "MANUAL",
+      enum: ["manual", "automatic"], // Update with your actual enum values
+      default: "automatic",
     },
 
     // Reference to messenger if submitted via that platform

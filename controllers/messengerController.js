@@ -710,6 +710,28 @@ async function processMessengerPhoto(photoUrl, psid) {
   }
 }
 
+async function handleDescriptionInput(psid, text, session) {
+  if (!text || text.trim().length < 10) {
+    return await sendResponse(psid, { 
+      text: "Please provide more details about what happened. Include when the person was last seen, what they were wearing, and any circumstances about their disappearance:" 
+    });
+  }
+  
+  // Update session with description - use proper field name
+  await MessengerReportSession.findOneAndUpdate(
+    { psid },
+    { 
+      'data.description': text.trim(), // Store under description field
+      currentStep: 'LOCATION'
+    },
+    { new: true }
+  );
+  
+  await sendResponse(psid, { 
+    text: "Thank you for the description. Now, please provide the last known location with as much detail as possible:" 
+  });
+}
+
 // UPDATED: Modified submitReport function to include description and better coordinates handling
 // Fixed submitReport function
 async function submitReport(psid) {
@@ -733,113 +755,68 @@ async function submitReport(psid) {
       });
     }
     
-    // Get coordinates and description
+    // Get coordinates
     const location = {
       address: {
         streetAddress: reportData.location?.address?.streetAddress || "Unknown",
         barangay: reportData.location?.address?.barangay || "Unknown",
         city: reportData.location?.address?.city || "Unknown",
         zipCode: reportData.location?.address?.zipCode || "Unknown"
-      },
-      rawAddress: reportData.location?.rawAddress || reportData.location?.address?.streetAddress
+      }
     };
     
-    // Extract the description
-    const description = reportData.messengerDescription || "";
+    // Extract the description - this might be in different locations depending on the conversation flow
+    const description = reportData.messengerDescription || reportData.description || "";
     console.log(`Description for report: "${description.substring(0, 50)}${description.length > 50 ? '...' : ''}"`);
     
-    // Try to use coordinates from session first
+    // Try to get coordinates from session
     let coordinates = reportData.location?.coordinates;
     
-    // If no valid coordinates in session, try geocoding again
-    if (!coordinates || !Array.isArray(coordinates) || coordinates.length !== 2 || 
-        (coordinates[0] === 0 && coordinates[1] === 0)) {
+    // If no coordinates in session data, try geocoding
+    if (!coordinates || !Array.isArray(coordinates) || coordinates.length !== 2) {
+      const geoData = await getCoordinatesFromAddress(location.address);
+      console.log("Geocoding result:", geoData);
       
-      console.log("No valid coordinates in session, attempting geocoding...");
-      
-      // Try with raw address first
-      let geoData = null;
-      if (location.rawAddress) {
-        geoData = await getCoordinatesFromAddress({ fullAddress: location.rawAddress });
-        console.log("Geocoding result (raw):", geoData);
-      }
-      
-      // If that fails, try with structured fields
-      if (!geoData || !geoData.success) {
-        geoData = await getCoordinatesFromAddress(location.address);
-        console.log("Geocoding result (structured):", geoData);
-      }
-      
-      if (geoData && geoData.success) {
+      if (geoData.success) {
         coordinates = geoData.coordinates;
-        
-        // Verify coordinates are in Philippines (rough bounding box)
-        const isInPhilippines = 
-          coordinates[0] >= 114 && coordinates[0] <= 127 && // Longitude
-          coordinates[1] >= 4 && coordinates[1] <= 21;      // Latitude
-          
-        if (!isInPhilippines) {
-          console.log("Warning: Coordinates appear to be outside Philippines:", coordinates);
-          // Use default coordinates for Metro Manila
-          coordinates = [121.0244, 14.5547];
-          await sendResponse(psid, { 
-            text: "We couldn't determine a valid location in the Philippines. Using Metro Manila as default location."
-          });
-        }
       } else {
-        // Use default coordinates (Metro Manila) if geocoding fails
-        coordinates = [121.0244, 14.5547]; // Metro Manila
-        await sendResponse(psid, { 
-          text: "We couldn't process your location precisely. We'll use Metro Manila as the approximate location, but please update your report in the app later."
-        });
+        // Default to Manila if geocoding fails
+        coordinates = [121.0244, 14.5547]; 
       }
     }
     
-    // Find or create user for this PSID
+    // Find user if exists
     let user = await User.findOne({ messengerPSID: psid });
     let isAnonymous = !user;
     
-    // If somehow we still don't have a user, create one now
-    if (!user) {
-      console.log("No linked account found. Creating temporary account for PSID:", psid);
-      user = await User.create({
-        messengerPSID: psid,
-        role: "citizen",
-        firstName: "Messenger",
-        lastName: "User",
-        email: `messenger_${psid}@temp.agapayalert.com`,
-        isActive: true
-      });
-    }
-    
     // Get user's selected police station if available, otherwise auto-assign
     const selectedPoliceStationId = reportData.selectedPoliceStation || null;
-    const useAutoAssign = reportData.useAutoAssign !== false; // Default to auto-assign if not specified
+    const useAutoAssign = reportData.useAutoAssign !== false;
     
     // Find police station
     const assignedStation = await findPoliceStation(selectedPoliceStationId, coordinates, useAutoAssign);
     
     if (!assignedStation) {
       return await sendResponse(psid, { 
-        text: "We couldn't find a police station to assign. Please provide more location details or select a specific station in the app."
+        text: "We couldn't find a police station to assign. Please provide more location details."
       });
     }
     
     console.log("Assigned station:", assignedStation._id);
     
-    // Create report with all available data
+    // Create report
     const report = new Report({
-      reporter: user._id,
+      reporter: user ? user._id : null,
       type: reportData.type,
       personInvolved: {
         firstName: reportData.personInvolved.firstName,
         lastName: reportData.personInvolved.lastName,
-        age: reportData.personInvolved.age,
-        // Required fields with default values
-        dateOfBirth: new Date(Date.now() - (reportData.personInvolved.age * 365 * 24 * 60 * 60 * 1000)),
+        age: reportData.personInvolved.age || 0,
+        // Required fields
+        dateOfBirth: new Date(Date.now() - ((reportData.personInvolved.age || 30) * 365 * 24 * 60 * 60 * 1000)),
         lastSeenDate: new Date(),
         lastSeentime: new Date().toTimeString().substring(0, 5),
-        lastKnownLocation: reportData.location.address.streetAddress,
+        lastKnownLocation: location.address.streetAddress,
         relationship: "Not specified via messenger",
         gender: "Unknown", // Required field
         mostRecentPhoto: {
@@ -854,37 +831,46 @@ async function submitReport(psid) {
       },
       assignedPoliceStation: assignedStation._id,
       broadcastConsent: true,
-      reportSource: "messenger",
-      messengerDescription: description, // Ensure description is saved
-      validCredential: reportData.credential || "Messenger report",
+      description: description, // Set description directly
+      // Use valid enum values for stationAssignmentType based on your schema
+      stationAssignmentType: selectedPoliceStationId ? "manual" : "automatic", // Check your actual enum values
       isAnonymous: isAnonymous,
-      stationAssignmentType: selectedPoliceStationId ? "MANUAL" : "AUTO",
+      messengerPSID: psid,
+      validCredential: reportData.credential || "Messenger report",
+      reportSource: "messenger",
       consentUpdateHistory: [
         {
           previousValue: false,
           newValue: true,
-          updatedBy: user._id,
+          updatedBy: user ? user._id : null,
           date: new Date(),
         }
       ]
     });
     
+    // If anonymous, add additional info
+    if (isAnonymous) {
+      report.anonymousReporter = {
+        contactInfo: `Messenger PSID: ${psid}`,
+        messengerPSID: psid
+      };
+    }
+    
     console.log("About to save report with data:", {
       type: report.type,
-      reporter: report.reporter,
+      reporter: report.reporter || "Via Messenger",
       firstName: report.personInvolved.firstName,
       lastName: report.personInvolved.lastName,
       coordinates: report.location.coordinates,
       photoUrl: report.personInvolved.mostRecentPhoto.url,
-      description: description.substring(0, 50) + (description.length > 50 ? "..." : "")
+      description: description ? "Set" : "Not provided"
     });
     
-    // Save with explicit error handling
     try {
       const savedReport = await report.save();
       console.log("Report saved successfully:", savedReport._id);
       
-      // Generate case ID automatically if not already set
+      // Generate case ID if needed
       if (!savedReport.caseId) {
         const prefix = savedReport.type.substring(0, 3).toUpperCase();
         const idSuffix = savedReport._id.toString().slice(-7);
@@ -892,13 +878,13 @@ async function submitReport(psid) {
         await savedReport.save();
       }
       
-      // Delete session only after successful save
+      // Delete session after successful save
       await session.deleteOne();
       
-      // Include information about description in confirmation
+      // Confirm to user
       const descriptionNote = description ? 
         "\n\nYour description has been saved with the report." : 
-        "\n\nNo detailed description was provided. You can add more details later in the app.";
+        "";
       
       await sendResponse(psid, { 
         text: `Thank you. Your report has been submitted successfully!\n\nCase ID: ${savedReport.caseId}\n\nIt has been assigned to ${assignedStation.name}.${descriptionNote}` 
@@ -915,7 +901,7 @@ async function submitReport(psid) {
         ).join('\n');
         
         await sendResponse(psid, { 
-          text: `We encountered validation errors while creating your report:\n\n${errorMessages}\n\nPlease try again or use the AgapayAlert app.` 
+          text: `We encountered validation errors while creating your report. Please try again or use the AgapayAlert app.` 
         });
       } else {
         await sendResponse(psid, { 
