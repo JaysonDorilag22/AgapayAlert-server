@@ -246,6 +246,12 @@ const reportSchema = new mongoose.Schema(
       default: null,
     },
 
+    //description of MESSENGER report
+    messengerDescription: {
+      type: String,
+      default: null,
+    },
+
     // Track if valid ID was submitted/verified
     validIdSubmitted: {
       type: Boolean,
