@@ -233,6 +233,37 @@ const reportSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    // Track where the report came from
+    reportSource: {
+      type: String,
+      enum: ["app", "messenger", "web", "admin", "other"],
+      default: "app",
+    },
+
+    // Store credential information for validation
+    credential: {
+      type: String,
+      default: null,
+    },
+
+    // Track if valid ID was submitted/verified
+    validIdSubmitted: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Information about how the police station was assigned
+    stationAssignmentType: {
+      type: String,
+      enum: ["MANUAL", "AUTO_NEARBY", "AUTO_FALLBACK", "ADMIN_ASSIGNED"],
+      default: "MANUAL",
+    },
+
+    // Reference to messenger if submitted via that platform
+    messengerData: {
+      psid: String,
+      sessionId: String,
+    },
   },
   { timestamps: true }
 );

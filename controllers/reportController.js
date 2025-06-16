@@ -12,7 +12,11 @@ const { getCoordinatesFromAddress } = require("../utils/geocoding");
 const { sendOneSignalNotification } = require("../utils/notificationUtils");
 const { isLastSeenMoreThan24Hours } = require("../utils/isLastSeenMoreThan24Hours");
 const { getIO, SOCKET_EVENTS } = require("../utils/socketUtils");
-const { sendTransferEmailWithAttachments, sendArchiveEmail, sendArchiveEmailWithImages } = require("../utils/sendEmail");
+const {
+  sendTransferEmailWithAttachments,
+  sendArchiveEmail,
+  sendArchiveEmailWithImages,
+} = require("../utils/sendEmail");
 
 // Helper function to find police station
 const findPoliceStation = async (selectedId, coordinates) => {
@@ -240,17 +244,16 @@ const findPoliceStation = async (selectedId, coordinates) => {
 const calculateDistance = (coord1, coord2) => {
   const [lon1, lat1] = coord1;
   const [lon2, lat2] = coord2;
-  
+
   const R = 6371; // Earth's radius in kilometers
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distance = R * c; // Distance in kilometers
-  
+
   return distance;
 };
 //create report v2
@@ -258,10 +261,10 @@ exports.createReport = asyncHandler(async (req, res) => {
   try {
     console.log("Create report request body:", JSON.stringify(req.body, null, 2));
     let { type, personInvolved, location, selectedPoliceStation } = req.body;
-    
+
     // Ensure personInvolved is properly initialized
     personInvolved = personInvolved || {};
-    
+
     let classifiedType = type;
     // Automatically handle Missing/Absent classification
     try {
@@ -269,27 +272,29 @@ exports.createReport = asyncHandler(async (req, res) => {
         // Debug time inputs
         console.log("Time inputs:", {
           lastSeenDate: personInvolved.lastSeenDate,
-          lastSeentime: personInvolved.lastSeentime
+          lastSeentime: personInvolved.lastSeentime,
         });
-        
+
         // Format check - if time is invalid, default to current type
-        if (!personInvolved.lastSeenDate || !personInvolved.lastSeentime ||
-            !/^\d{1,2}:\d{2}(:\d{2})?$/.test(personInvolved.lastSeentime)) {
+        if (
+          !personInvolved.lastSeenDate ||
+          !personInvolved.lastSeentime ||
+          !/^\d{1,2}:\d{2}(:\d{2})?$/.test(personInvolved.lastSeentime)
+        ) {
           console.warn("Invalid date/time format, using original type:", type);
         } else {
-          const timeCheck = isLastSeenMoreThan24Hours(
-            personInvolved.lastSeenDate,
-            personInvolved.lastSeentime
-          );
+          const timeCheck = isLastSeenMoreThan24Hours(personInvolved.lastSeenDate, personInvolved.lastSeentime);
           classifiedType = timeCheck.isMoreThan24Hours ? "Missing" : "Absent";
-          console.log(`Time check results: Last seen ${timeCheck.hoursPassed} hours ago. Classified as: ${classifiedType}`);
+          console.log(
+            `Time check results: Last seen ${timeCheck.hoursPassed} hours ago. Classified as: ${classifiedType}`
+          );
         }
       }
     } catch (timeError) {
       console.error("Error during time classification check:", timeError);
       // Keep the original type if there's an error
     }
-    
+
     type = classifiedType;
 
     const broadcastConsent = req.body.broadcastConsent === "true";
@@ -325,9 +330,7 @@ exports.createReport = asyncHandler(async (req, res) => {
     // Handle additional images
     let additionalImages = [];
     if (req.files?.additionalImages) {
-      const uploadPromises = req.files.additionalImages.map((file) =>
-        uploadToCloudinary(file.path, "reports")
-      );
+      const uploadPromises = req.files.additionalImages.map((file) => uploadToCloudinary(file.path, "reports"));
       const uploadResults = await Promise.all(uploadPromises);
       additionalImages = uploadResults.map((result) => ({
         url: result.url,
@@ -341,14 +344,10 @@ exports.createReport = asyncHandler(async (req, res) => {
       try {
         const videoFile = req.files.video[0];
         console.log("Uploading video:", videoFile.path);
-        const videoResult = await uploadToCloudinary(
-          videoFile.path, 
-          "report_videos", 
-          "video"
-        );
+        const videoResult = await uploadToCloudinary(videoFile.path, "report_videos", "video");
         video = {
           url: videoResult.url,
-          public_id: videoResult.public_id
+          public_id: videoResult.public_id,
         };
         console.log("Video uploaded successfully:", video);
       } catch (videoError) {
@@ -368,35 +367,32 @@ exports.createReport = asyncHandler(async (req, res) => {
 
     // Find available officers
     const availableOfficers = await User.find({
-  policeStation: assignedStation._id,
-  roles: 'police_officer',
-  isOnDuty: true
-});
+      policeStation: assignedStation._id,
+      roles: "police_officer",
+      isOnDuty: true,
+    });
 
     // Filter officers with less than 3 active cases
     const eligibleOfficers = [];
-for (const officer of availableOfficers) {
-  const activeCasesCount = await Report.countDocuments({
-    assignedOfficer: officer._id,
-    status: { $ne: 'Resolved' }
-  });
-  
-  if (activeCasesCount < 10) {
-    officer.activeCasesCount = activeCasesCount;
-    eligibleOfficers.push(officer);
-  }
-}
+    for (const officer of availableOfficers) {
+      const activeCasesCount = await Report.countDocuments({
+        assignedOfficer: officer._id,
+        status: { $ne: "Resolved" },
+      });
+
+      if (activeCasesCount < 10) {
+        officer.activeCasesCount = activeCasesCount;
+        eligibleOfficers.push(officer);
+      }
+    }
 
     // Find nearest officer
     let nearestOfficer = null;
     if (eligibleOfficers.length > 0) {
       nearestOfficer = eligibleOfficers.reduce((nearest, officer) => {
         if (!officer.location?.coordinates) return nearest;
-        
-        const distance = calculateDistance(
-          geoData.coordinates,
-          officer.location.coordinates
-        );
+
+        const distance = calculateDistance(geoData.coordinates, officer.location.coordinates);
 
         if (!nearest || distance < nearest.distance) {
           return { officer, distance };
@@ -439,35 +435,47 @@ for (const officer of availableOfficers) {
 
     // Auto-assign nearest officer if available
     if (nearestOfficer) {
-  report.assignedOfficer = nearestOfficer.officer._id;
-  report.status = "Assigned";
-  
-  console.log(`Auto-assigned nearest officer: ${nearestOfficer.officer.firstName} ${nearestOfficer.officer.lastName} (${nearestOfficer.distance.toFixed(2)}km away)`);
-} else if (eligibleOfficers.length > 0) {
-  // If no location data for distance calculation, assign to officer with least active cases
-  const leastBusyOfficer = eligibleOfficers.reduce((least, officer) => 
-    (officer.activeCasesCount || 0) < (least.activeCasesCount || 0) ? officer : least
-  );
-  
-  report.assignedOfficer = leastBusyOfficer._id;
-  report.status = "Assigned";
-  
-  console.log(`Auto-assigned least busy officer: ${leastBusyOfficer.firstName} ${leastBusyOfficer.lastName} (${leastBusyOfficer.activeCasesCount || 0} active cases)`);
-} else if (eligibleOfficers.length > 0) {
-      // If no location data for distance calculation, assign to officer with least active cases
-      const leastBusyOfficer = eligibleOfficers.reduce((least, officer) => 
-        (officer.assignedCases?.length || 0) < (least.assignedCases?.length || 0) ? officer : least
+      report.assignedOfficer = nearestOfficer.officer._id;
+      report.status = "Assigned";
+
+      console.log(
+        `Auto-assigned nearest officer: ${nearestOfficer.officer.firstName} ${
+          nearestOfficer.officer.lastName
+        } (${nearestOfficer.distance.toFixed(2)}km away)`
       );
-      
+    } else if (eligibleOfficers.length > 0) {
+      // If no location data for distance calculation, assign to officer with least active cases
+      const leastBusyOfficer = eligibleOfficers.reduce((least, officer) =>
+        (officer.activeCasesCount || 0) < (least.activeCasesCount || 0) ? officer : least
+      );
+
       report.assignedOfficer = leastBusyOfficer._id;
       report.status = "Assigned";
-      
-      console.log(`Auto-assigned least busy officer: ${leastBusyOfficer.firstName} ${leastBusyOfficer.lastName} (${leastBusyOfficer.assignedCases?.length || 0} active cases)`);
-      
+
+      console.log(
+        `Auto-assigned least busy officer: ${leastBusyOfficer.firstName} ${leastBusyOfficer.lastName} (${
+          leastBusyOfficer.activeCasesCount || 0
+        } active cases)`
+      );
+    } else if (eligibleOfficers.length > 0) {
+      // If no location data for distance calculation, assign to officer with least active cases
+      const leastBusyOfficer = eligibleOfficers.reduce((least, officer) =>
+        (officer.assignedCases?.length || 0) < (least.assignedCases?.length || 0) ? officer : least
+      );
+
+      report.assignedOfficer = leastBusyOfficer._id;
+      report.status = "Assigned";
+
+      console.log(
+        `Auto-assigned least busy officer: ${leastBusyOfficer.firstName} ${leastBusyOfficer.lastName} (${
+          leastBusyOfficer.assignedCases?.length || 0
+        } active cases)`
+      );
+
       // Add to officer's assigned cases
       try {
         await User.findByIdAndUpdate(leastBusyOfficer._id, {
-          $addToSet: { assignedCases: report._id }
+          $addToSet: { assignedCases: report._id },
         });
       } catch (error) {
         console.error("Error updating officer's assigned cases:", error);
@@ -485,59 +493,59 @@ for (const officer of availableOfficers) {
 
     // Notify eligible officers
     // Notify eligible officers
-eligibleOfficers.forEach(officer => {
-  if (officer.deviceToken) {
-    const isAssigned = report.assignedOfficer && report.assignedOfficer.equals(officer._id);
-    const isNearest = nearestOfficer?.officer._id.equals(officer._id);
-    
-    // Different messages based on assignment status
-    let notificationTitle, notificationMessage;
-    if (isAssigned) {
-      notificationTitle = `Case Assigned to You`;
-      notificationMessage = `You have been automatically assigned to a new ${type} case (Case ID: ${report.caseId})`;
-    } else if (isNearest) {
-      notificationTitle = `New ${type} Case Alert`;
-      notificationMessage = `You are the nearest officer to a new ${type} case`;
-    } else {
-      notificationTitle = `New ${type} Case Alert`;
-      notificationMessage = `New ${type} case assigned to your station`;
-    }
+    eligibleOfficers.forEach((officer) => {
+      if (officer.deviceToken) {
+        const isAssigned = report.assignedOfficer && report.assignedOfficer.equals(officer._id);
+        const isNearest = nearestOfficer?.officer._id.equals(officer._id);
 
-    notificationPromises.push(
-      Notification.create({
-        recipient: officer._id,
-        type: isAssigned ? 'CASE_ASSIGNED' : 'NEW_CASE_AVAILABLE',
-        title: notificationTitle,
-        message: notificationMessage,
-        data: {
-          reportId: report._id,
-          caseId: report.caseId,
-          type: report.type,
-          isAssigned: isAssigned,
-          isNearestOfficer: isNearest
+        // Different messages based on assignment status
+        let notificationTitle, notificationMessage;
+        if (isAssigned) {
+          notificationTitle = `Case Assigned to You`;
+          notificationMessage = `You have been automatically assigned to a new ${type} case (Case ID: ${report.caseId})`;
+        } else if (isNearest) {
+          notificationTitle = `New ${type} Case Alert`;
+          notificationMessage = `You are the nearest officer to a new ${type} case`;
+        } else {
+          notificationTitle = `New ${type} Case Alert`;
+          notificationMessage = `New ${type} case assigned to your station`;
         }
-      })
-    );
 
-    notificationPromises.push(
-      sendOneSignalNotification({
-        include_player_ids: [officer.deviceToken],
-        headings: { en: notificationTitle },
-        message: notificationMessage, // Changed from 'contents' to 'message'
-        data: {
-          type: isAssigned ? 'CASE_ASSIGNED' : 'NEW_CASE_AVAILABLE',
-          reportId: report._id,
-          caseId: report.caseId,
-          isAssigned: isAssigned,
-          isNearestOfficer: isNearest
-        }
-      })
-    );
-  }
-});
+        notificationPromises.push(
+          Notification.create({
+            recipient: officer._id,
+            type: isAssigned ? "CASE_ASSIGNED" : "NEW_CASE_AVAILABLE",
+            title: notificationTitle,
+            message: notificationMessage,
+            data: {
+              reportId: report._id,
+              caseId: report.caseId,
+              type: report.type,
+              isAssigned: isAssigned,
+              isNearestOfficer: isNearest,
+            },
+          })
+        );
+
+        notificationPromises.push(
+          sendOneSignalNotification({
+            include_player_ids: [officer.deviceToken],
+            headings: { en: notificationTitle },
+            message: notificationMessage, // Changed from 'contents' to 'message'
+            data: {
+              type: isAssigned ? "CASE_ASSIGNED" : "NEW_CASE_AVAILABLE",
+              reportId: report._id,
+              caseId: report.caseId,
+              isAssigned: isAssigned,
+              isNearestOfficer: isNearest,
+            },
+          })
+        );
+      }
+    });
 
     // Enhanced reporter notification with assignment info
-    const reporterMessage = report.assignedOfficer 
+    const reporterMessage = report.assignedOfficer
       ? `Your ${type} report (Case ID: ${report.caseId}) has been created and assigned to ${assignedStation.name}. An officer has been automatically assigned to your case.`
       : `Your ${type} report (Case ID: ${report.caseId}) has been created and assigned to ${assignedStation.name}`;
 
@@ -550,7 +558,7 @@ eligibleOfficers.forEach(officer => {
         data: {
           reportId: report._id,
           caseId: report.caseId,
-          hasAssignedOfficer: !!report.assignedOfficer
+          hasAssignedOfficer: !!report.assignedOfficer,
         },
       })
     );
@@ -583,19 +591,19 @@ eligibleOfficers.forEach(officer => {
     io.to(`policeStation_${assignedStation._id}`).emit(SOCKET_EVENTS.NEW_REPORT, {
       report: populatedReport,
       message: `New ${type} report assigned to your station`,
-      eligibleOfficers: eligibleOfficers.map(o => ({
+      eligibleOfficers: eligibleOfficers.map((o) => ({
         id: o._id,
         name: `${o.firstName} ${o.lastName}`,
         activeCases: o.assignedCases?.length || 0,
         isNearest: nearestOfficer?.officer._id.equals(o._id),
-        isAssigned: report.assignedOfficer && report.assignedOfficer.equals(o._id)
-      }))
+        isAssigned: report.assignedOfficer && report.assignedOfficer.equals(o._id),
+      })),
     });
 
     // Emit to city admin room
     io.to(`city_${location.address.city}`).emit(SOCKET_EVENTS.NEW_REPORT, {
       report: populatedReport,
-      message: `New ${type} report in your city`
+      message: `New ${type} report in your city`,
     });
 
     res.status(statusCodes.CREATED).json({
@@ -604,33 +612,38 @@ eligibleOfficers.forEach(officer => {
       data: {
         report: {
           ...report.toObject(),
-          caseId: report.caseId
+          caseId: report.caseId,
         },
         assignedStation,
-        eligibleOfficers: eligibleOfficers.map(o => ({
+        eligibleOfficers: eligibleOfficers.map((o) => ({
           id: o._id,
           name: `${o.firstName} ${o.lastName}`,
           activeCases: o.assignedCases?.length || 0,
           isNearest: nearestOfficer?.officer._id.equals(o._id),
-          isAssigned: report.assignedOfficer && report.assignedOfficer.equals(o._id)
+          isAssigned: report.assignedOfficer && report.assignedOfficer.equals(o._id),
         })),
         assignmentInfo: {
           type: selectedPoliceStation ? "Manual Selection" : "Automatic Assignment",
           hasAssignedOfficer: !!report.assignedOfficer,
-          assignedOfficer: report.assignedOfficer ? {
-            id: nearestOfficer?.officer._id || eligibleOfficers.find(o => o._id.equals(report.assignedOfficer))?._id,
-            name: nearestOfficer?.officer ? 
-              `${nearestOfficer.officer.firstName} ${nearestOfficer.officer.lastName}` : 
-              eligibleOfficers.find(o => o._id.equals(report.assignedOfficer)) ? 
-                `${eligibleOfficers.find(o => o._id.equals(report.assignedOfficer)).firstName} ${eligibleOfficers.find(o => o._id.equals(report.assignedOfficer)).lastName}` : 
-                'Unknown',
-            distance: nearestOfficer?.distance,
-            assignmentReason: nearestOfficer ? 'Nearest officer' : 'Least busy officer'
-          } : null
-        }
+          assignedOfficer: report.assignedOfficer
+            ? {
+                id:
+                  nearestOfficer?.officer._id ||
+                  eligibleOfficers.find((o) => o._id.equals(report.assignedOfficer))?._id,
+                name: nearestOfficer?.officer
+                  ? `${nearestOfficer.officer.firstName} ${nearestOfficer.officer.lastName}`
+                  : eligibleOfficers.find((o) => o._id.equals(report.assignedOfficer))
+                  ? `${eligibleOfficers.find((o) => o._id.equals(report.assignedOfficer)).firstName} ${
+                      eligibleOfficers.find((o) => o._id.equals(report.assignedOfficer)).lastName
+                    }`
+                  : "Unknown",
+                distance: nearestOfficer?.distance,
+                assignmentReason: nearestOfficer ? "Nearest officer" : "Least busy officer",
+              }
+            : null,
+        },
       },
     });
-
   } catch (error) {
     console.error("Error in createReport:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
@@ -641,18 +654,17 @@ eligibleOfficers.forEach(officer => {
   }
 });
 
-
 // Update a report when it's still pending
 exports.updateReport = asyncHandler(async (req, res) => {
   // Debug logging for received data
-  console.log('Update Report - Received Data:', {
+  console.log("Update Report - Received Data:", {
     params: req.params,
     body: req.body,
-    files: req.files || 'No files uploaded',
+    files: req.files || "No files uploaded",
     user: {
       id: req.user.id,
-      roles: req.user.roles
-    }
+      roles: req.user.roles,
+    },
   });
 
   const { reportId } = req.params;
@@ -660,8 +672,8 @@ exports.updateReport = asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
   const report = await Report.findById(reportId)
-    .populate('reporter', 'deviceToken firstName lastName')
-    .populate('assignedPoliceStation', 'name');
+    .populate("reporter", "deviceToken firstName lastName")
+    .populate("assignedPoliceStation", "name");
 
   if (!report) {
     return res.status(statusCodes.NOT_FOUND).json({
@@ -683,8 +695,8 @@ exports.updateReport = asyncHandler(async (req, res) => {
 
   // Update personInvolved fields if provided and user is allowed
   if (personInvolved && (report.status === "Pending" || isOfficer)) {
-    Object.keys(personInvolved).forEach(field => {
-      if (field !== 'mostRecentPhoto') {
+    Object.keys(personInvolved).forEach((field) => {
+      if (field !== "mostRecentPhoto") {
         report.personInvolved[field] = personInvolved[field];
       }
     });
@@ -696,9 +708,7 @@ exports.updateReport = asyncHandler(async (req, res) => {
       // Update main photo if provided
       if (req.files["personInvolved[mostRecentPhoto]"]) {
         if (report.personInvolved.mostRecentPhoto?.public_id) {
-          await cloudinary.uploader.destroy(
-            report.personInvolved.mostRecentPhoto.public_id
-          );
+          await cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id);
         }
 
         const photoFile = req.files["personInvolved[mostRecentPhoto]"][0];
@@ -712,9 +722,7 @@ exports.updateReport = asyncHandler(async (req, res) => {
 
       // Handle additional images
       if (req.files.additionalImages) {
-        const uploadPromises = req.files.additionalImages.map((file) =>
-          uploadToCloudinary(file.path, "reports")
-        );
+        const uploadPromises = req.files.additionalImages.map((file) => uploadToCloudinary(file.path, "reports"));
 
         const uploadResults = await Promise.all(uploadPromises);
         const newImages = uploadResults.map((result) => ({
@@ -737,9 +745,7 @@ exports.updateReport = asyncHandler(async (req, res) => {
 
   // Remove images if requested and allowed
   if (removeImages && (report.status === "Pending" || isOfficer)) {
-    const imagesToRemove = Array.isArray(removeImages)
-      ? removeImages
-      : [removeImages];
+    const imagesToRemove = Array.isArray(removeImages) ? removeImages : [removeImages];
     for (const imageId of imagesToRemove) {
       const imageIndex = report.additionalImages.findIndex(
         (img) => img.public_id === imageId || img._id.toString() === imageId
@@ -755,13 +761,7 @@ exports.updateReport = asyncHandler(async (req, res) => {
 
   // Handle status updates (police only)
   if (status && isOfficer) {
-    const validStatuses = [
-      "Pending",
-      "Assigned",
-      "Under Investigation",
-      "Resolved",
-      "Archived",
-    ];
+    const validStatuses = ["Pending", "Assigned", "Under Investigation", "Resolved", "Archived"];
     if (!validStatuses.includes(status)) {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
@@ -791,9 +791,9 @@ exports.updateReport = asyncHandler(async (req, res) => {
 
     // Get populated report for response
     const updatedReport = await Report.findById(report._id)
-      .populate('reporter', 'firstName lastName number email')
-      .populate('assignedPoliceStation', 'name address contactNumber')
-      .populate('assignedOfficer', 'firstName lastName number')
+      .populate("reporter", "firstName lastName number email")
+      .populate("assignedPoliceStation", "name address contactNumber")
+      .populate("assignedOfficer", "firstName lastName number")
       .select({
         type: 1,
         status: 1,
@@ -803,27 +803,24 @@ exports.updateReport = asyncHandler(async (req, res) => {
         broadcastConsent: 1,
         additionalImages: 1,
         createdAt: 1,
-        updatedAt: 1
+        updatedAt: 1,
       });
 
     // Emit socket event for real-time update
     const io = getIO();
-    
+
     // Emit to police station room
     if (report.assignedPoliceStation) {
-      io.to(`policeStation_${report.assignedPoliceStation}`).emit(
-        SOCKET_EVENTS.REPORT_UPDATED,
-        {
-          report: updatedReport,
-          message: `Report ${report._id} has been updated`
-        }
-      );
+      io.to(`policeStation_${report.assignedPoliceStation}`).emit(SOCKET_EVENTS.REPORT_UPDATED, {
+        report: updatedReport,
+        message: `Report ${report._id} has been updated`,
+      });
     }
 
     // Emit to reporter
     io.to(`user_${report.reporter._id}`).emit(SOCKET_EVENTS.REPORT_UPDATED, {
       report: updatedReport,
-      message: 'Your report has been updated'
+      message: "Your report has been updated",
     });
 
     // Create notification for reporter if updated by officer
@@ -846,7 +843,7 @@ exports.updateReport = asyncHandler(async (req, res) => {
     res.status(statusCodes.OK).json({
       success: true,
       msg: "Report updated successfully",
-      data: updatedReport
+      data: updatedReport,
     });
   } catch (error) {
     console.error("Error updating report:", error);
@@ -876,13 +873,7 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
 
     // Validate status value if provided
     if (status) {
-      const validStatuses = [
-        "Pending",
-        "Assigned",
-        "Under Investigation",
-        "Resolved",
-        "Archived",
-      ];
+      const validStatuses = ["Pending", "Assigned", "Under Investigation", "Resolved", "Archived"];
       if (!validStatuses.includes(status)) {
         return res.status(statusCodes.BAD_REQUEST).json({
           success: false,
@@ -905,7 +896,7 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
     }
 
     // Check authorization
-    const isAuthorized = req.user.roles.some(role => 
+    const isAuthorized = req.user.roles.some((role) =>
       ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
     );
 
@@ -940,7 +931,7 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
       report.followUp.push({
         note: followUp.trim(),
         updatedBy: userId,
-        updatedAt: new Date()
+        updatedAt: new Date(),
       });
     }
 
@@ -958,15 +949,15 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
         followUp: 1,
         statusHistory: 1,
         updatedAt: 1,
-        type: 1
+        type: 1,
       });
 
     // Handle notifications safely
-    if (report.reporter?.deviceToken) 
+    if (report.reporter?.deviceToken)
       await sendOneSignalNotification({
         include_player_ids: [report.reporter.deviceToken],
         title: status ? "Report Status Update" : "Follow-up Added",
-        message: status 
+        message: status
           ? `Your report status has been updated to: ${status}`
           : "A new follow-up note has been added to your report",
         data: {
@@ -981,7 +972,7 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
       const io = getIO();
       io.to(`user_${report.reporter._id}`).emit(SOCKET_EVENTS.REPORT_UPDATED, {
         report: updatedReport,
-        message: status ? 'Status updated' : 'Follow-up added'
+        message: status ? "Status updated" : "Follow-up added",
       });
     } catch (socketError) {
       console.error("Socket emission failed:", socketError);
@@ -997,25 +988,26 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
           statusUpdated: !!status,
           followUpAdded: !!followUp,
           previousStatus: status ? report.statusHistory[report.statusHistory.length - 1]?.previousStatus : null,
-          newStatus: status || null
-        }
-      }
+          newStatus: status || null,
+        },
+      },
     });
-
   } catch (error) {
     console.error("Error updating report:", error);
     console.error("Error stack:", error.stack);
-    
+
     // Check for specific error types
-    if (error.name === 'ValidationError') {
+    if (error.name === "ValidationError") {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
         msg: "Validation error",
-        error: Object.values(error.errors).map(e => e.message).join(', ')
+        error: Object.values(error.errors)
+          .map((e) => e.message)
+          .join(", "),
       });
     }
 
-    if (error.name === 'CastError') {
+    if (error.name === "CastError") {
       return res.status(statusCodes.BAD_REQUEST).json({
         success: false,
         msg: "Invalid report ID format",
@@ -1065,7 +1057,7 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
 //             msg: "Officer/Admin must be assigned to a police station",
 //           });
 //         }
-        
+
 //         // No filter on query - they can see ALL reports from ALL stations
 //         // But we'll sort to prioritize reports from their station
 //         sortOptions = {
@@ -1135,29 +1127,22 @@ exports.updateUserReport = asyncHandler(async (req, res) => {
 
 // Get Reports (with filters)
 exports.getReports = asyncHandler(async (req, res) => {
-  console.log('touched getReports endpoint');
+  console.log("touched getReports endpoint");
   try {
-    console.log('=== GET REPORTS REQUEST ===');
-    console.log('Query params:', req.query);
-    console.log('User info:', {
+    console.log("=== GET REPORTS REQUEST ===");
+    console.log("Query params:", req.query);
+    console.log("User info:", {
       id: req.user._id,
       roles: req.user.roles,
       policeStation: req.user.policeStation,
-      address: req.user.address
+      address: req.user.address,
     });
 
-    const {
-      status,
-      type,
-      startDate,
-      endDate,
-      page = 1,
-      limit = 10,
-    } = req.query;
+    const { status, type, startDate, endDate, page = 1, limit = 10 } = req.query;
     const currentPage = parseInt(page);
     const limitPerPage = parseInt(limit);
 
-    console.log('Pagination params:', { currentPage, limitPerPage });
+    console.log("Pagination params:", { currentPage, limitPerPage });
 
     // Base match stage for the aggregation pipeline
     let matchStage = {};
@@ -1172,20 +1157,20 @@ exports.getReports = asyncHandler(async (req, res) => {
       };
     }
 
-    console.log('Base match stage:', JSON.stringify(matchStage, null, 2));
+    console.log("Base match stage:", JSON.stringify(matchStage, null, 2));
 
     // Basic authentication check - only authorized roles can view reports
-    if (!req.user.roles.some(role => 
-      ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
-    )) {
-      console.log('❌ Authorization failed - user roles:', req.user.roles);
+    if (
+      !req.user.roles.some((role) => ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role))
+    ) {
+      console.log("❌ Authorization failed - user roles:", req.user.roles);
       return res.status(statusCodes.FORBIDDEN).json({
         success: false,
         msg: "Not authorized to view reports",
       });
     }
 
-    console.log('✅ Authorization passed');
+    console.log("✅ Authorization passed");
 
     // Aggregation pipeline
     const pipeline = [
@@ -1219,14 +1204,14 @@ exports.getReports = asyncHandler(async (req, res) => {
       { $unwind: { path: "$assignedOfficer", preserveNullAndEmptyArrays: true } },
     ];
 
-    console.log('Base pipeline stages:', pipeline.length);
+    console.log("Base pipeline stages:", pipeline.length);
 
     // Enhanced role-based sorting with priority system
     if (req.user.roles.includes("police_officer")) {
-      console.log('🔵 POLICE OFFICER - Adding priority sorting');
-      console.log('Officer ID:', req.user._id);
-      console.log('Officer station:', req.user.policeStation);
-      
+      console.log("🔵 POLICE OFFICER - Adding priority sorting");
+      console.log("Officer ID:", req.user._id);
+      console.log("Officer station:", req.user.policeStation);
+
       // Police Officers: Priority order
       // 1. Reports assigned to them personally (highest priority)
       // 2. Reports from their police station
@@ -1235,27 +1220,28 @@ exports.getReports = asyncHandler(async (req, res) => {
         $addFields: {
           priority: {
             $cond: [
-              { $eq: ["$assignedOfficer._id", req.user._id] }, 1, // Assigned to them = priority 1
+              { $eq: ["$assignedOfficer._id", req.user._id] },
+              1, // Assigned to them = priority 1
               {
                 $cond: [
-                  { $eq: ["$assignedPoliceStation._id", req.user.policeStation] }, 2, // Their station = priority 2
-                  3 // Other reports = priority 3
-                ]
-              }
-            ]
-          }
-        }
+                  { $eq: ["$assignedPoliceStation._id", req.user.policeStation] },
+                  2, // Their station = priority 2
+                  3, // Other reports = priority 3
+                ],
+              },
+            ],
+          },
+        },
       };
-      
-      console.log('Priority stage for officer:', JSON.stringify(priorityStage, null, 2));
+
+      console.log("Priority stage for officer:", JSON.stringify(priorityStage, null, 2));
       pipeline.push(priorityStage);
       pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
-
     } else if (req.user.roles.includes("police_admin")) {
-      console.log('🟡 POLICE ADMIN - Adding priority sorting');
-      console.log('Admin station:', req.user.policeStation);
-      console.log('Admin city:', req.user.address?.city);
-      
+      console.log("🟡 POLICE ADMIN - Adding priority sorting");
+      console.log("Admin station:", req.user.policeStation);
+      console.log("Admin city:", req.user.address?.city);
+
       // Police Admins: Priority order
       // 1. Reports from their police station (highest priority)
       // 2. Reports from their city
@@ -1265,30 +1251,31 @@ exports.getReports = asyncHandler(async (req, res) => {
           $addFields: {
             priority: {
               $cond: [
-                { $eq: ["$assignedPoliceStation._id", req.user.policeStation] }, 1, // Their station = priority 1
+                { $eq: ["$assignedPoliceStation._id", req.user.policeStation] },
+                1, // Their station = priority 1
                 {
                   $cond: [
-                    { $eq: ["$assignedPoliceStation.address.city", req.user.address?.city] }, 2, // Their city = priority 2
-                    3 // Other reports = priority 3
-                  ]
-                }
-              ]
-            }
-          }
+                    { $eq: ["$assignedPoliceStation.address.city", req.user.address?.city] },
+                    2, // Their city = priority 2
+                    3, // Other reports = priority 3
+                  ],
+                },
+              ],
+            },
+          },
         };
-        
-        console.log('Priority stage for admin:', JSON.stringify(priorityStage, null, 2));
+
+        console.log("Priority stage for admin:", JSON.stringify(priorityStage, null, 2));
         pipeline.push(priorityStage);
         pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
       } else {
-        console.log('⚠️ Police admin has no station assigned - using default sort');
+        console.log("⚠️ Police admin has no station assigned - using default sort");
         pipeline.push({ $sort: { createdAt: -1 } });
       }
-
     } else if (req.user.roles.includes("city_admin")) {
-      console.log('🟢 CITY ADMIN - Adding priority sorting');
-      console.log('City admin city:', req.user.address?.city);
-      
+      console.log("🟢 CITY ADMIN - Adding priority sorting");
+      console.log("City admin city:", req.user.address?.city);
+
       // City Admins: Priority order
       // 1. Reports from their city (highest priority)
       // 2. All other reports
@@ -1297,35 +1284,34 @@ exports.getReports = asyncHandler(async (req, res) => {
           $addFields: {
             priority: {
               $cond: [
-                { 
+                {
                   $or: [
                     { $eq: ["$assignedPoliceStation.address.city", req.user.address.city] },
-                    { $eq: ["$location.address.city", req.user.address.city] }
-                  ]
-                }, 1, // Their city = priority 1
-                2 // Other reports = priority 2
-              ]
-            }
-          }
+                    { $eq: ["$location.address.city", req.user.address.city] },
+                  ],
+                },
+                1, // Their city = priority 1
+                2, // Other reports = priority 2
+              ],
+            },
+          },
         };
-        
-        console.log('Priority stage for city admin:', JSON.stringify(priorityStage, null, 2));
+
+        console.log("Priority stage for city admin:", JSON.stringify(priorityStage, null, 2));
         pipeline.push(priorityStage);
         pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
       } else {
-        console.log('⚠️ City admin has no city assigned - using default sort');
+        console.log("⚠️ City admin has no city assigned - using default sort");
         pipeline.push({ $sort: { createdAt: -1 } });
       }
-
     } else if (req.user.roles.includes("super_admin")) {
-      console.log('🔴 SUPER ADMIN - Using default sort');
+      console.log("🔴 SUPER ADMIN - Using default sort");
       // Super Admins: Just sort by date (they can see everything equally)
       pipeline.push({ $sort: { createdAt: -1 } });
-
     } else {
-      console.log('🟣 REGULAR USER - Adding priority sorting');
-      console.log('User city:', req.user.address?.city);
-      
+      console.log("🟣 REGULAR USER - Adding priority sorting");
+      console.log("User city:", req.user.address?.city);
+
       // Regular users (if any): Priority order
       // 1. Reports from their city (if they have an address)
       // 2. All other reports
@@ -1334,54 +1320,55 @@ exports.getReports = asyncHandler(async (req, res) => {
           $addFields: {
             priority: {
               $cond: [
-                { 
+                {
                   $or: [
                     { $eq: ["$assignedPoliceStation.address.city", req.user.address.city] },
-                    { $eq: ["$location.address.city", req.user.address.city] }
-                  ]
-                }, 1, // Their city = priority 1
-                2 // Other reports = priority 2
-              ]
-            }
-          }
+                    { $eq: ["$location.address.city", req.user.address.city] },
+                  ],
+                },
+                1, // Their city = priority 1
+                2, // Other reports = priority 2
+              ],
+            },
+          },
         };
-        
-        console.log('Priority stage for regular user:', JSON.stringify(priorityStage, null, 2));
+
+        console.log("Priority stage for regular user:", JSON.stringify(priorityStage, null, 2));
         pipeline.push(priorityStage);
         pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
       } else {
-        console.log('⚠️ Regular user has no city - using default sort');
+        console.log("⚠️ Regular user has no city - using default sort");
         pipeline.push({ $sort: { createdAt: -1 } });
       }
     }
 
     // Pagination
-    console.log('Adding pagination:', { skip: (currentPage - 1) * limitPerPage, limit: limitPerPage });
+    console.log("Adding pagination:", { skip: (currentPage - 1) * limitPerPage, limit: limitPerPage });
     pipeline.push({ $skip: (currentPage - 1) * limitPerPage });
     pipeline.push({ $limit: limitPerPage });
 
-    console.log('Final pipeline length:', pipeline.length);
-    console.log('Complete pipeline:', JSON.stringify(pipeline, null, 2));
+    console.log("Final pipeline length:", pipeline.length);
+    console.log("Complete pipeline:", JSON.stringify(pipeline, null, 2));
 
     // Execute the aggregation pipeline
-    console.log('🔄 Executing aggregation pipeline...');
+    console.log("🔄 Executing aggregation pipeline...");
     const reports = await Report.aggregate(pipeline);
-    console.log('✅ Aggregation completed, found reports:', reports.length);
+    console.log("✅ Aggregation completed, found reports:", reports.length);
 
     // Get total count for pagination
-    console.log('🔄 Getting total count...');
+    console.log("🔄 Getting total count...");
     const total = await Report.countDocuments(matchStage);
-    console.log('✅ Total reports count:', total);
+    console.log("✅ Total reports count:", total);
 
     // Log first few reports for debugging
     if (reports.length > 0) {
-      console.log('First report sample:', {
+      console.log("First report sample:", {
         id: reports[0]._id,
         type: reports[0].type,
         priority: reports[0].priority,
         assignedStation: reports[0].assignedPoliceStation?.name,
         assignedOfficer: reports[0].assignedOfficer?.firstName,
-        createdAt: reports[0].createdAt
+        createdAt: reports[0].createdAt,
       });
     }
 
@@ -1393,23 +1380,23 @@ exports.getReports = asyncHandler(async (req, res) => {
       hasMore: currentPage * limitPerPage < total,
     };
 
-    console.log('📊 Response metadata:', {
+    console.log("📊 Response metadata:", {
       currentPage: responseData.currentPage,
       totalPages: responseData.totalPages,
       totalReports: responseData.totalReports,
       hasMore: responseData.hasMore,
-      reportsInResponse: responseData.reports.length
+      reportsInResponse: responseData.reports.length,
     });
 
-    console.log('=== GET REPORTS RESPONSE SENT ===');
+    console.log("=== GET REPORTS RESPONSE SENT ===");
 
     res.status(statusCodes.OK).json({
       success: true,
       data: responseData,
     });
   } catch (error) {
-    console.error('❌ ERROR in getReports:', error);
-    console.error('Error stack:', error.stack);
+    console.error("❌ ERROR in getReports:", error);
+    console.error("Error stack:", error.stack);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: "Error retrieving reports",
@@ -1443,9 +1430,7 @@ exports.deleteReport = asyncHandler(async (req, res) => {
     }
   }
   if (report.personInvolved?.mostRecentPhoto?.public_id) {
-    await cloudinary.uploader.destroy(
-      report.personInvolved.mostRecentPhoto.public_id
-    );
+    await cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id);
   }
 
   await report.deleteOne();
@@ -1657,34 +1642,39 @@ exports.getPublicFeed = asyncHandler(async (req, res) => {
     }
 
     // Add type filter if provided and valid
-    if (
-      type &&
-      ["Missing", "Abducted", "Kidnapped", "Hit-and-Run"].includes(type)
-    ) {
+    if (type && ["Missing", "Abducted", "Kidnapped", "Hit-and-Run"].includes(type)) {
       query.type = type;
     }
 
     // Add firstName filter if provided
     if (firstName) {
-      query["personInvolved.firstName"] = new RegExp(firstName, 'i'); // Case-insensitive search
+      query["personInvolved.firstName"] = new RegExp(firstName, "i"); // Case-insensitive search
     }
 
     // Add lastName filter if provided
     if (lastName) {
-      query["personInvolved.lastName"] = new RegExp(lastName, 'i'); // Case-insensitive search
+      query["personInvolved.lastName"] = new RegExp(lastName, "i"); // Case-insensitive search
     }
 
     // Add searchName filter if provided
     if (searchName) {
       query["$or"] = [
-        { "personInvolved.firstName": new RegExp(searchName, 'i') },
-        { "personInvolved.lastName": new RegExp(searchName, 'i') },
-        { $expr: { $regexMatch: { input: { $concat: ["$personInvolved.firstName", " ", "$personInvolved.lastName"] }, regex: searchName, options: "i" } } }
+        { "personInvolved.firstName": new RegExp(searchName, "i") },
+        { "personInvolved.lastName": new RegExp(searchName, "i") },
+        {
+          $expr: {
+            $regexMatch: {
+              input: { $concat: ["$personInvolved.firstName", " ", "$personInvolved.lastName"] },
+              regex: searchName,
+              options: "i",
+            },
+          },
+        },
       ];
     }
 
     const reports = await Report.find(query)
-      .populate('reporter', 'firstName lastName avatar') // Populate reporter details
+      .populate("reporter", "firstName lastName avatar") // Populate reporter details
       .select({
         type: 1,
         "personInvolved.firstName": 1,
@@ -1750,9 +1740,7 @@ exports.getReportCities = asyncHandler(async (req, res) => {
       status: { $ne: "Resolved" },
     });
 
-    const sortedCities = cities
-      .filter((city) => city)
-      .sort((a, b) => a.localeCompare(b));
+    const sortedCities = cities.filter((city) => city).sort((a, b) => a.localeCompare(b));
 
     res.status(statusCodes.OK).json({
       success: true,
@@ -1835,16 +1823,7 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
     let report;
 
     // Case 1: Admin/Officer Access - Full Details
-    if (
-      userRoles.some((role) =>
-        [
-          "police_officer",
-          "police_admin",
-          "city_admin",
-          "super_admin",
-        ].includes(role)
-      )
-    ) {
+    if (userRoles.some((role) => ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role))) {
       let query = { _id: reportId };
 
       // Apply role-based restrictions (removed police station restrictions)
@@ -1894,62 +1873,61 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
           assignedPoliceStation: 1,
           assignedOfficer: 1,
         });
-
     } else if (userId) {
       // Case 2: Report Owner Access - Limited Details
       report = await Report.findOne({
         _id: reportId,
-        $or: [{ reporter: userId }, { broadcastConsent: true }]
+        $or: [{ reporter: userId }, { broadcastConsent: true }],
       })
-      .populate("reporter", "firstName lastName number email address")
-      .populate("assignedPoliceStation", "name address contactNumber")
-      .populate("assignedOfficer", "avatar firstName lastName number")
-      .select({
-        caseId: 1,
-        type: 1,
-        personInvolved: {
-          firstName: 1,
-          lastName: 1,
-          alias: 1,
-          age: 1,
-          dateOfBirth: 1,
-          gender: 1,
-          race: 1,
-          height: 1,
-          weight: 1,
-          eyeColor: 1,
-          hairColor: 1,
-          scarsMarksTattoos: 1,
-          birthDefects: 1,
-          prosthetics: 1,
-          bloodType: 1,
-          medications: 1,
-          lastKnownClothing: 1,
-          lastSeenDate: 1,
-          lastSeentime: 1,
-          lastKnownLocation: 1,
-          contactInformation: 1,
-          relationship: 1,
-          otherInformation: 1,
-          mostRecentPhoto: 1
-        },
-        additionalImages: 1,
-        video: 1,
-        location: 1,
-        status: 1,
-        followUp: 1,
-        broadcastConsent: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        assignedPoliceStation: 1,
-        assignedOfficer: 1
-      });
+        .populate("reporter", "firstName lastName number email address")
+        .populate("assignedPoliceStation", "name address contactNumber")
+        .populate("assignedOfficer", "avatar firstName lastName number")
+        .select({
+          caseId: 1,
+          type: 1,
+          personInvolved: {
+            firstName: 1,
+            lastName: 1,
+            alias: 1,
+            age: 1,
+            dateOfBirth: 1,
+            gender: 1,
+            race: 1,
+            height: 1,
+            weight: 1,
+            eyeColor: 1,
+            hairColor: 1,
+            scarsMarksTattoos: 1,
+            birthDefects: 1,
+            prosthetics: 1,
+            bloodType: 1,
+            medications: 1,
+            lastKnownClothing: 1,
+            lastSeenDate: 1,
+            lastSeentime: 1,
+            lastKnownLocation: 1,
+            contactInformation: 1,
+            relationship: 1,
+            otherInformation: 1,
+            mostRecentPhoto: 1,
+          },
+          additionalImages: 1,
+          video: 1,
+          location: 1,
+          status: 1,
+          followUp: 1,
+          broadcastConsent: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          assignedPoliceStation: 1,
+          assignedOfficer: 1,
+        });
     } else {
       // Case 3: Public Access - Minimal Details
       report = await Report.findOne({
         _id: reportId,
         broadcastConsent: true,
-        isPublished: true
+        isPublished: true,
       }).select({
         caseId: 1,
         type: 1,
@@ -1969,9 +1947,9 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
         reportId,
         userId,
         userRoles,
-        userPoliceStation: req.user.policeStation
+        userPoliceStation: req.user.policeStation,
       });
-      
+
       return res.status(statusCodes.NOT_FOUND).json({
         success: false,
         msg: "Report not found or access denied",
@@ -1983,13 +1961,17 @@ exports.getUserReportDetails = asyncHandler(async (req, res) => {
       success: true,
       reportId: report._id,
       caseId: report.caseId,
-      reportType: report.type, 
+      reportType: report.type,
       userRole: userRoles[0],
-      accessType: userRoles.some(role => ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)) 
-        ? "Admin/Officer (Full Access)" 
-        : (userId ? "Report Owner (Limited Access)" : "Public (Minimal Access)"),
+      accessType: userRoles.some((role) =>
+        ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
+      )
+        ? "Admin/Officer (Full Access)"
+        : userId
+        ? "Report Owner (Limited Access)"
+        : "Public (Minimal Access)",
       assignedStation: report.assignedPoliceStation?._id || report.assignedPoliceStation,
-      userStation: req.user.policeStation
+      userStation: req.user.policeStation,
     });
 
     res.status(statusCodes.OK).json({
@@ -2018,9 +2000,9 @@ exports.searchReports = asyncHandler(async (req, res) => {
     let searchQuery = {};
 
     // Basic authorization check - only authorized roles can search reports
-    if (!req.user.roles.some(role => 
-      ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
-    )) {
+    if (
+      !req.user.roles.some((role) => ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role))
+    ) {
       return res.status(statusCodes.FORBIDDEN).json({
         success: false,
         msg: "Not authorized to search reports",
@@ -2146,11 +2128,7 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
     const { reportId, newStationId } = req.body;
 
     // Authorization check
-    if (
-      !req.user.roles.some((role) =>
-        ["city_admin", "super_admin"].includes(role)
-      )
-    ) {
+    if (!req.user.roles.some((role) => ["city_admin", "super_admin"].includes(role))) {
       return res.status(statusCodes.FORBIDDEN).json({
         success: false,
         msg: "Only city admin or super admin can reassign police stations",
@@ -2158,9 +2136,7 @@ exports.reassignPoliceStation = asyncHandler(async (req, res) => {
     }
 
     // Get report details
-    const report = await Report.findById(reportId)
-      .populate("assignedPoliceStation")
-      .populate("reporter");
+    const report = await Report.findById(reportId).populate("assignedPoliceStation").populate("reporter");
 
     if (!report) {
       return res.status(statusCodes.NOT_FOUND).json({
@@ -2278,17 +2254,17 @@ exports.updateAllReportCaseIds = asyncHandler(async (req, res) => {
   try {
     // Get all reports, regardless of whether they have a caseId
     const reports = await Report.find({});
-    
+
     console.log(`Found ${reports.length} reports to update`);
-    
+
     let updatedCount = 0;
-    
+
     // Update each report
     for (const report of reports) {
       const prefix = report.type.substring(0, 3).toUpperCase();
       const idSuffix = report._id.toString().slice(-7);
       const newCaseId = `${prefix}-${idSuffix}`;
-      
+
       // Only update if the caseId is different
       if (report.caseId !== newCaseId) {
         report.caseId = newCaseId;
@@ -2303,21 +2279,20 @@ exports.updateAllReportCaseIds = asyncHandler(async (req, res) => {
       data: {
         totalReports: reports.length,
         updatedCount,
-        examples: reports.slice(0, 5).map(r => ({
+        examples: reports.slice(0, 5).map((r) => ({
           id: r._id,
           oldCaseId: r.caseId,
           newCaseId: `${r.type.substring(0, 3).toUpperCase()}-${r._id.toString().slice(-7)}`,
-          type: r.type
-        }))
-      }
+          type: r.type,
+        })),
+      },
     });
-
   } catch (error) {
-    console.error('Error updating report case IDs:', error);
+    console.error("Error updating report case IDs:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
-      message: 'Error updating report case IDs',
-      error: error.message
+      message: "Error updating report case IDs",
+      error: error.message,
     });
   }
 });
@@ -2333,25 +2308,28 @@ exports.searchPublicReports = asyncHandler(async (req, res) => {
     let query = {
       broadcastConsent: true,
       isPublished: true,
-      status: { $ne: "Resolved" }
+      status: { $ne: "Resolved" },
     };
 
-    // Add search conditions if searchQuery exists 
+    // Add search conditions if searchQuery exists
     if (searchQuery) {
-      const searchTerms = searchQuery.trim().split(" ").filter(term => term.length > 0);
-      
+      const searchTerms = searchQuery
+        .trim()
+        .split(" ")
+        .filter((term) => term.length > 0);
+
       query.$or = [
         // Name searches (partial matches, case insensitive)
         { "personInvolved.firstName": { $regex: searchQuery, $options: "i" } },
         { "personInvolved.lastName": { $regex: searchQuery, $options: "i" } },
-        
+
         // Location searches
         { "location.address.streetAddress": { $regex: searchQuery, $options: "i" } },
         { "location.address.barangay": { $regex: searchQuery, $options: "i" } },
         { "location.address.city": { $regex: searchQuery, $options: "i" } },
-        
+
         // Type search
-        { type: { $regex: searchQuery, $options: "i" } }
+        { type: { $regex: searchQuery, $options: "i" } },
       ];
 
       // Add full name search for multiple terms
@@ -2361,15 +2339,15 @@ exports.searchPublicReports = asyncHandler(async (req, res) => {
           {
             $and: [
               { "personInvolved.firstName": { $regex: searchTerms[0], $options: "i" } },
-              { "personInvolved.lastName": { $regex: searchTerms[1], $options: "i" } }
-            ]
+              { "personInvolved.lastName": { $regex: searchTerms[1], $options: "i" } },
+            ],
           },
           // First term as last name, second as first name
           {
             $and: [
               { "personInvolved.firstName": { $regex: searchTerms[1], $options: "i" } },
-              { "personInvolved.lastName": { $regex: searchTerms[0], $options: "i" } }
-            ]
+              { "personInvolved.lastName": { $regex: searchTerms[0], $options: "i" } },
+            ],
           }
         );
       }
@@ -2390,10 +2368,10 @@ exports.searchPublicReports = asyncHandler(async (req, res) => {
           age: 1,
           lastSeenDate: 1,
           lastSeentime: 1,
-          mostRecentPhoto: 1
+          mostRecentPhoto: 1,
         },
         location: 1,
-        createdAt: 1
+        createdAt: 1,
       })
       .sort("-createdAt")
       .skip((currentPage - 1) * limitPerPage)
@@ -2404,32 +2382,31 @@ exports.searchPublicReports = asyncHandler(async (req, res) => {
     res.status(statusCodes.OK).json({
       success: true,
       data: {
-        reports: reports.map(report => ({
+        reports: reports.map((report) => ({
           id: report._id,
           type: report.type,
           personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
           age: report.personInvolved.age,
           lastSeen: {
             date: report.personInvolved.lastSeenDate,
-            time: report.personInvolved.lastSeentime
+            time: report.personInvolved.lastSeentime,
           },
           location: report.location.address,
           photo: report.personInvolved.mostRecentPhoto.url,
-          reportedAt: report.createdAt
+          reportedAt: report.createdAt,
         })),
         currentPage,
         totalPages: Math.ceil(total / limitPerPage),
         totalResults: total,
-        hasMore: currentPage * limitPerPage < total
-      }
+        hasMore: currentPage * limitPerPage < total,
+      },
     });
-
   } catch (error) {
     console.error("Search error:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
-      success: false, 
+      success: false,
       msg: "Error searching reports",
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -2438,20 +2415,20 @@ exports.updateAbsentToMissingReports = asyncHandler(async (req, res) => {
   try {
     // Find all Absent reports
     const absentReports = await Report.find({ type: "Absent" });
-    
+
     let updatedCount = 0;
-    
+
     // Check each report to see if it's been more than 24 hours
     for (const report of absentReports) {
       const timeCheck = isLastSeenMoreThan24Hours(
         report.personInvolved.lastSeenDate,
         report.personInvolved.lastSeentime
       );
-      
+
       if (timeCheck.isMoreThan24Hours) {
         // Update report type to Missing
         report.type = "Missing";
-        
+
         // Add status history entry
         report.statusHistory = report.statusHistory || [];
         report.statusHistory.push({
@@ -2459,12 +2436,12 @@ exports.updateAbsentToMissingReports = asyncHandler(async (req, res) => {
           newStatus: report.status, // Status remains the same, only type changes
           updatedBy: null, // System update
           updatedAt: new Date(),
-          notes: `Automatically updated from Absent to Missing after ${timeCheck.hoursPassed} hours`
+          notes: `Automatically updated from Absent to Missing after ${timeCheck.hoursPassed} hours`,
         });
-        
+
         await report.save();
         updatedCount++;
-        
+
         // Notify relevant parties
         try {
           // Notify reporter
@@ -2479,14 +2456,14 @@ exports.updateAbsentToMissingReports = asyncHandler(async (req, res) => {
               },
             });
           }
-          
+
           // Notify assigned police station
           if (report.assignedPoliceStation) {
             const policeAdmins = await User.find({
               policeStation: report.assignedPoliceStation,
               roles: "police_admin",
             });
-            
+
             for (const admin of policeAdmins) {
               await Notification.create({
                 recipient: admin._id,
@@ -2504,19 +2481,18 @@ exports.updateAbsentToMissingReports = asyncHandler(async (req, res) => {
         }
       }
     }
-    
+
     res.status(statusCodes.OK).json({
       success: true,
       message: `Updated ${updatedCount} reports from Absent to Missing`,
-      data: { updatedCount }
+      data: { updatedCount },
     });
-    
   } catch (error) {
     console.error("Error updating absent to missing reports:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       message: "Error updating reports",
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -2530,12 +2506,10 @@ exports.transferReport = asyncHandler(async (req, res) => {
     const { recipientEmail, recipientDepartment, transferNotes } = req.body;
 
     // Authorization check - only police_admin, city_admin, and super_admin can transfer
-    if (!req.user.roles.some(role => 
-      ["police_admin", "city_admin", "super_admin"].includes(role)
-    )) {
+    if (!req.user.roles.some((role) => ["police_admin", "city_admin", "super_admin"].includes(role))) {
       // Check if user is assigned officer for this report
       const report = await Report.findById(req.params.reportId || req.body.reportId);
-      
+
       if (!report) {
         return res.status(statusCodes.NOT_FOUND).json({
           success: false,
@@ -2545,9 +2519,10 @@ exports.transferReport = asyncHandler(async (req, res) => {
 
       // Allow if user is the assigned officer or belongs to the assigned police station or is a police officer at the station
       const isAssignedOfficer = report.assignedOfficer && report.assignedOfficer.toString() === req.user._id.toString();
-      const isStationMember = report.assignedPoliceStation && report.assignedPoliceStation.toString() === req.user.policeStation?.toString();
+      const isStationMember =
+        report.assignedPoliceStation && report.assignedPoliceStation.toString() === req.user.policeStation?.toString();
       const isPoliceOfficer = req.user.roles.includes("police_officer");
-      
+
       if (!isAssignedOfficer && !isStationMember && !isPoliceOfficer) {
         return res.status(statusCodes.FORBIDDEN).json({
           success: false,
@@ -2589,13 +2564,13 @@ exports.transferReport = asyncHandler(async (req, res) => {
 
     // Prepare media attachments for email
     const emailAttachments = [];
-    
+
     // Add main photo if exists
     if (report.personInvolved.mostRecentPhoto?.url) {
       emailAttachments.push({
         filename: `main_photo_${report.caseId}.jpg`,
         path: report.personInvolved.mostRecentPhoto.url,
-        cid: 'mainPhoto'
+        cid: "mainPhoto",
       });
     }
 
@@ -2605,7 +2580,7 @@ exports.transferReport = asyncHandler(async (req, res) => {
         emailAttachments.push({
           filename: `additional_image_${index + 1}_${report.caseId}.jpg`,
           path: image.url,
-          cid: `additionalImage${index + 1}`
+          cid: `additionalImage${index + 1}`,
         });
       });
     }
@@ -2615,7 +2590,7 @@ exports.transferReport = asyncHandler(async (req, res) => {
       emailAttachments.push({
         filename: `video_${report.caseId}.mp4`,
         path: report.video.url,
-        cid: 'reportVideo'
+        cid: "reportVideo",
       });
     }
 
@@ -2626,9 +2601,9 @@ exports.transferReport = asyncHandler(async (req, res) => {
       reportType: report.type,
       transferDate: new Date().toLocaleDateString(),
       transferredBy: `${req.user.firstName} ${req.user.lastName}`,
-      transferNotes: transferNotes || 'No additional notes provided',
+      transferNotes: transferNotes || "No additional notes provided",
       recipientDepartment,
-      
+
       // Person involved details
       personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
       personAge: report.personInvolved.age,
@@ -2639,41 +2614,45 @@ exports.transferReport = asyncHandler(async (req, res) => {
       lastKnownLocation: report.personInvolved.lastKnownLocation,
       relationship: report.personInvolved.relationship,
       contactInformation: report.personInvolved.contactInformation,
-      
+
       // Reporter details
       reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
       reporterEmail: report.reporter.email,
       reporterPhone: report.reporter.number,
       reporterAddress: report.reporter.address,
-      
+
       // Location details
       location: {
         streetAddress: report.location.address.streetAddress,
         barangay: report.location.address.barangay,
         city: report.location.address.city,
-        zipCode: report.location.address.zipCode
+        zipCode: report.location.address.zipCode,
       },
-      
+
       // Station details
-      assignedStation: report.assignedPoliceStation ? {
-        name: report.assignedPoliceStation.name,
-        address: report.assignedPoliceStation.address,
-        contact: report.assignedPoliceStation.contactNumber
-      } : null,
-      
+      assignedStation: report.assignedPoliceStation
+        ? {
+            name: report.assignedPoliceStation.name,
+            address: report.assignedPoliceStation.address,
+            contact: report.assignedPoliceStation.contactNumber,
+          }
+        : null,
+
       // Officer details
-      assignedOfficer: report.assignedOfficer ? {
-        name: `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}`,
-        email: report.assignedOfficer.email,
-        phone: report.assignedOfficer.number
-      } : null,
-      
+      assignedOfficer: report.assignedOfficer
+        ? {
+            name: `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}`,
+            email: report.assignedOfficer.email,
+            phone: report.assignedOfficer.number,
+          }
+        : null,
+
       // Case details
       createdAt: report.createdAt,
       currentStatus: report.status,
       followUpNotes: report.followUp || [],
       statusHistory: report.statusHistory || [],
-      
+
       // Additional information
       personDescription: {
         height: report.personInvolved.height,
@@ -2683,38 +2662,34 @@ exports.transferReport = asyncHandler(async (req, res) => {
         scarsMarksTattoos: report.personInvolved.scarsMarksTattoos,
         lastKnownClothing: report.personInvolved.lastKnownClothing,
         medications: report.personInvolved.medications,
-        otherInformation: report.personInvolved.otherInformation
+        otherInformation: report.personInvolved.otherInformation,
       },
-      
+
       // Media info for template
       hasMainPhoto: !!report.personInvolved.mostRecentPhoto?.url,
       additionalImagesCount: report.additionalImages?.length || 0,
       hasVideo: !!report.video?.url,
-      
+
       // Media arrays for template iteration
       additionalImages: report.additionalImages || [],
       mainPhotoUrl: report.personInvolved.mostRecentPhoto?.url,
-      videoUrl: report.video?.url
+      videoUrl: report.video?.url,
     };
 
     // Send transfer email with attachments
-    const emailResult = await sendTransferEmailWithAttachments(
-      emailContext,
-      [recipientEmail],
-      emailAttachments
-    );
+    const emailResult = await sendTransferEmailWithAttachments(emailContext, [recipientEmail], emailAttachments);
 
     if (!emailResult.success) {
       return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
         success: false,
         msg: "Failed to send transfer email",
-        error: emailResult.error
+        error: emailResult.error,
       });
     }
 
     // Update report status and add transfer information
     report.status = "Transferred";
-    
+
     // Add to status history
     report.statusHistory = report.statusHistory || [];
     report.statusHistory.push({
@@ -2722,7 +2697,7 @@ exports.transferReport = asyncHandler(async (req, res) => {
       newStatus: "Transferred",
       updatedBy: req.user._id,
       updatedAt: new Date(),
-      notes: `Transferred to ${recipientDepartment} (${recipientEmail}): ${transferNotes || 'No notes'}`
+      notes: `Transferred to ${recipientDepartment} (${recipientEmail}): ${transferNotes || "No notes"}`,
     });
 
     // Add transfer record
@@ -2732,7 +2707,7 @@ exports.transferReport = asyncHandler(async (req, res) => {
       department: recipientDepartment,
       transferredBy: req.user._id,
       transferDate: new Date(),
-      notes: transferNotes
+      notes: transferNotes,
     });
 
     await report.save();
@@ -2743,27 +2718,21 @@ exports.transferReport = asyncHandler(async (req, res) => {
 
     // Delete main photo
     if (report.personInvolved.mostRecentPhoto?.public_id) {
-      deletePromises.push(
-        cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id)
-      );
+      deletePromises.push(cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id));
     }
 
     // Delete additional images
     if (report.additionalImages?.length > 0) {
-      report.additionalImages.forEach(image => {
+      report.additionalImages.forEach((image) => {
         if (image.public_id) {
-          deletePromises.push(
-            cloudinary.uploader.destroy(image.public_id)
-          );
+          deletePromises.push(cloudinary.uploader.destroy(image.public_id));
         }
       });
     }
 
     // Delete video
     if (report.video?.public_id) {
-      deletePromises.push(
-        cloudinary.uploader.destroy(report.video.public_id, { resource_type: "video" })
-      );
+      deletePromises.push(cloudinary.uploader.destroy(report.video.public_id, { resource_type: "video" }));
     }
 
     // Execute all deletions
@@ -2829,10 +2798,9 @@ exports.transferReport = asyncHandler(async (req, res) => {
         emailSent: emailResult.success,
         mediaFilesDeleted: deletePromises.length,
         mediaFilesAttached: emailAttachments.length,
-        reportDeleted: true
-      }
+        reportDeleted: true,
+      },
     });
-
   } catch (error) {
     console.error("Error transferring report:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
@@ -2848,9 +2816,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     const { recipientEmail, startDate, endDate, policeStationId, includeImages = true } = req.body;
 
     // Authorization check - only admins can archive reports
-    if (!req.user.roles.some(role => 
-      ["police_admin", "city_admin", "super_admin"].includes(role)
-    )) {
+    if (!req.user.roles.some((role) => ["police_admin", "city_admin", "super_admin"].includes(role))) {
       return res.status(statusCodes.FORBIDDEN).json({
         success: false,
         msg: "Only admins can archive resolved reports",
@@ -2867,12 +2833,12 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 
     // Build query for resolved reports
     let query = { status: "Resolved" };
-    
+
     // Add date range filter
     if (startDate && endDate) {
       query.createdAt = {
         $gte: new Date(startDate),
-        $lte: new Date(endDate)
+        $lte: new Date(endDate),
       };
     }
 
@@ -2886,7 +2852,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
           msg: "Police station not found",
         });
       }
-      
+
       query.assignedPoliceStation = policeStationId;
     }
 
@@ -2910,41 +2876,41 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     let policeStationName = null;
     if (policeStationId) {
       const station = await PoliceStation.findById(policeStationId);
-      policeStationName = station?.name || 'Unknown Station';
+      policeStationName = station?.name || "Unknown Station";
     }
 
     // Create Excel workbook
-    const ExcelJS = require('exceljs');
+    const ExcelJS = require("exceljs");
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Resolved Reports');
+    const worksheet = workbook.addWorksheet("Resolved Reports");
 
     // Define columns (removed photo/video columns, added note column)
     worksheet.columns = [
-      { header: 'Case ID', key: 'caseId', width: 15 },
-      { header: 'Report Type', key: 'type', width: 15 },
-      { header: 'Person Name', key: 'personName', width: 25 },
-      { header: 'Age', key: 'age', width: 10 },
-      { header: 'Gender', key: 'gender', width: 10 },
-      { header: 'Last Seen Date', key: 'lastSeenDate', width: 15 },
-      { header: 'Last Seen Time', key: 'lastSeenTime', width: 15 },
-      { header: 'Location', key: 'location', width: 30 },
-      { header: 'Reporter Name', key: 'reporterName', width: 25 },
-      { header: 'Reporter Email', key: 'reporterEmail', width: 30 },
-      { header: 'Reporter Phone', key: 'reporterPhone', width: 15 },
-      { header: 'Assigned Station', key: 'assignedStation', width: 25 },
-      { header: 'Assigned Officer', key: 'assignedOfficer', width: 25 },
-      { header: 'Status', key: 'status', width: 15 },
-      { header: 'Created Date', key: 'createdAt', width: 20 },
-      { header: 'Resolved Date', key: 'resolvedAt', width: 20 },
-      { header: 'Media Files Note', key: 'mediaNote', width: 30 },
+      { header: "Case ID", key: "caseId", width: 15 },
+      { header: "Report Type", key: "type", width: 15 },
+      { header: "Person Name", key: "personName", width: 25 },
+      { header: "Age", key: "age", width: 10 },
+      { header: "Gender", key: "gender", width: 10 },
+      { header: "Last Seen Date", key: "lastSeenDate", width: 15 },
+      { header: "Last Seen Time", key: "lastSeenTime", width: 15 },
+      { header: "Location", key: "location", width: 30 },
+      { header: "Reporter Name", key: "reporterName", width: 25 },
+      { header: "Reporter Email", key: "reporterEmail", width: 30 },
+      { header: "Reporter Phone", key: "reporterPhone", width: 15 },
+      { header: "Assigned Station", key: "assignedStation", width: 25 },
+      { header: "Assigned Officer", key: "assignedOfficer", width: 25 },
+      { header: "Status", key: "status", width: 15 },
+      { header: "Created Date", key: "createdAt", width: 20 },
+      { header: "Resolved Date", key: "resolvedAt", width: 20 },
+      { header: "Media Files Note", key: "mediaNote", width: 30 },
     ];
 
     // Style the header row
     const headerRow = worksheet.getRow(1);
-    headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
-    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
-    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    headerRow.font = { bold: true, color: { argb: "FFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "2C3E50" } };
+    headerRow.alignment = { horizontal: "center", vertical: "middle" };
 
     // Count total media files
     let totalMediaFiles = 0;
@@ -2952,30 +2918,30 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     // Process each report
     for (let i = 0; i < resolvedReports.length; i++) {
       const report = resolvedReports[i];
-      
+
       // Find resolved date from status history
-      const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
+      const resolvedEntry = report.statusHistory?.find((entry) => entry.newStatus === "Resolved");
       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
 
       // Count media files for this report
       let mediaCount = 0;
       let mediaTypes = [];
-      
+
       if (report.personInvolved.mostRecentPhoto?.url) {
         mediaCount++;
-        mediaTypes.push('Main Photo');
+        mediaTypes.push("Main Photo");
         totalMediaFiles++;
       }
-      
+
       if (report.additionalImages?.length > 0) {
         mediaCount += report.additionalImages.length;
         mediaTypes.push(`${report.additionalImages.length} Additional Images`);
         totalMediaFiles += report.additionalImages.length;
       }
-      
+
       if (report.video?.url) {
         mediaCount++;
-        mediaTypes.push('Video');
+        mediaTypes.push("Video");
         totalMediaFiles++;
       }
 
@@ -2986,20 +2952,23 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
         personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
         age: report.personInvolved.age,
         gender: report.personInvolved.gender,
-        lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
-        lastSeenTime: report.personInvolved.lastSeentime || '',
+        lastSeenDate: report.personInvolved.lastSeenDate
+          ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString()
+          : "",
+        lastSeenTime: report.personInvolved.lastSeentime || "",
         location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
         reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
         reporterEmail: report.reporter.email,
         reporterPhone: report.reporter.number,
-        assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
-        assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
+        assignedStation: report.assignedPoliceStation?.name || "Not assigned",
+        assignedOfficer: report.assignedOfficer
+          ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}`
+          : "Not assigned",
         status: report.status,
         createdAt: new Date(report.createdAt).toLocaleDateString(),
         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
-        mediaNote: mediaCount > 0 ? 
-          `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` : 
-          'No media files'
+        mediaNote:
+          mediaCount > 0 ? `${mediaCount} files: ${mediaTypes.join(", ")} - See email for images` : "No media files",
       };
 
       // Add row to worksheet
@@ -3008,47 +2977,49 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 
     // Add a note at the top about media files
     worksheet.insertRow(1, {
-      caseId: 'NOTE:',
-      type: 'Media files (photos/videos) are embedded in the email below.',
-      personName: 'This Excel file contains only text data.',
-      age: '',
-      gender: '',
-      lastSeenDate: '',
-      lastSeenTime: '',
-      location: '',
-      reporterName: '',
-      reporterEmail: '',
-      reporterPhone: '',
-      assignedStation: '',
-      assignedOfficer: '',
-      status: '',
-      createdAt: '',
-      resolvedAt: '',
-      mediaNote: 'Check email content for images'
+      caseId: "NOTE:",
+      type: "Media files (photos/videos) are embedded in the email below.",
+      personName: "This Excel file contains only text data.",
+      age: "",
+      gender: "",
+      lastSeenDate: "",
+      lastSeenTime: "",
+      location: "",
+      reporterName: "",
+      reporterEmail: "",
+      reporterPhone: "",
+      assignedStation: "",
+      assignedOfficer: "",
+      status: "",
+      createdAt: "",
+      resolvedAt: "",
+      mediaNote: "Check email content for images",
     });
 
     // Style the note row
     const noteRow = worksheet.getRow(1);
-    noteRow.font = { bold: true, color: { argb: 'FF0000' } };
-    noteRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF99' } };
+    noteRow.font = { bold: true, color: { argb: "FF0000" } };
+    noteRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF99" } };
 
     // Re-style the header row (now row 2)
     const newHeaderRow = worksheet.getRow(2);
-    newHeaderRow.font = { bold: true, color: { argb: 'FFFFFF' } };
-    newHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2C3E50' } };
-    newHeaderRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    newHeaderRow.font = { bold: true, color: { argb: "FFFFFF" } };
+    newHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "2C3E50" } };
+    newHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
 
     // Apply alternating row colors (starting from row 3)
     worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber > 2) { // Skip note and header rows
-        if (rowNumber % 2 === 1) { // Odd rows (excluding header)
-          row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F8F9FA' } };
+      if (rowNumber > 2) {
+        // Skip note and header rows
+        if (rowNumber % 2 === 1) {
+          // Odd rows (excluding header)
+          row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "F8F9FA" } };
         }
       }
     });
 
     // Auto-fit columns
-    worksheet.columns.forEach(column => {
+    worksheet.columns.forEach((column) => {
       column.width = Math.max(column.width, 10);
     });
 
@@ -3056,64 +3027,75 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     const excelBuffer = await workbook.xlsx.writeBuffer();
 
     // Prepare reports data for email template
-    const reportsWithMedia = resolvedReports.map(report => {
-      const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
+    const reportsWithMedia = resolvedReports.map((report) => {
+      const resolvedEntry = report.statusHistory?.find((entry) => entry.newStatus === "Resolved");
       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
-      
+
       return {
         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
         type: report.type,
         personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
         age: report.personInvolved.age,
         gender: report.personInvolved.gender,
-        lastSeenDate: report.personInvolved.lastSeenDate ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString() : '',
-        lastSeenTime: report.personInvolved.lastSeentime || '',
+        lastSeenDate: report.personInvolved.lastSeenDate
+          ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString()
+          : "",
+        lastSeenTime: report.personInvolved.lastSeentime || "",
         location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
         reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
         reporterEmail: report.reporter.email,
         reporterPhone: report.reporter.number,
-        assignedStation: report.assignedPoliceStation?.name || 'Not assigned',
-        assignedOfficer: report.assignedOfficer ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : 'Not assigned',
+        assignedStation: report.assignedPoliceStation?.name || "Not assigned",
+        assignedOfficer: report.assignedOfficer
+          ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}`
+          : "Not assigned",
         createdAt: new Date(report.createdAt).toLocaleDateString(),
         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
         mainPhoto: report.personInvolved.mostRecentPhoto?.url || null,
         additionalImages: report.additionalImages || [],
         video: report.video?.url || null,
-        hasMedia: !!(report.personInvolved.mostRecentPhoto?.url || report.additionalImages?.length > 0 || report.video?.url)
+        hasMedia: !!(
+          report.personInvolved.mostRecentPhoto?.url ||
+          report.additionalImages?.length > 0 ||
+          report.video?.url
+        ),
       };
     });
 
     // Email context with police station info
     const emailContext = {
       totalReports: resolvedReports.length,
-      dateRange: startDate && endDate ? `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}` : 'All time',
-      policeStationFilter: policeStationName || 'All stations',
+      dateRange:
+        startDate && endDate
+          ? `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}`
+          : "All time",
+      policeStationFilter: policeStationName || "All stations",
       generatedBy: `${req.user.firstName} ${req.user.lastName}`,
       generatedDate: new Date().toLocaleDateString(),
       includesImages: includeImages,
       totalMediaFiles: totalMediaFiles,
-      reports: reportsWithMedia
+      reports: reportsWithMedia,
     };
 
     // Email attachments (only Excel file)
-    const emailAttachments = [{
-      filename: `Resolved_Reports_Archive_${policeStationName ? `${policeStationName.replace(/\s+/g, '_')}_` : ''}${new Date().toISOString().split('T')[0]}.xlsx`,
-      content: excelBuffer,
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    }];
+    const emailAttachments = [
+      {
+        filename: `Resolved_Reports_Archive_${policeStationName ? `${policeStationName.replace(/\s+/g, "_")}_` : ""}${
+          new Date().toISOString().split("T")[0]
+        }.xlsx`,
+        content: excelBuffer,
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    ];
 
     // Send email
-    const emailResult = await sendArchiveEmailWithImages(
-      emailContext,
-      [recipientEmail],
-      emailAttachments
-    );
+    const emailResult = await sendArchiveEmailWithImages(emailContext, [recipientEmail], emailAttachments);
 
     if (!emailResult.success) {
       return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
         success: false,
         msg: "Failed to send archive email",
-        error: emailResult.error
+        error: emailResult.error,
       });
     }
 
@@ -3125,27 +3107,21 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     for (const report of resolvedReports) {
       // Delete main photo
       if (report.personInvolved.mostRecentPhoto?.public_id) {
-        deletePromises.push(
-          cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id)
-        );
+        deletePromises.push(cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id));
       }
 
       // Delete additional images
       if (report.additionalImages?.length > 0) {
-        report.additionalImages.forEach(image => {
+        report.additionalImages.forEach((image) => {
           if (image.public_id) {
-            deletePromises.push(
-              cloudinary.uploader.destroy(image.public_id)
-            );
+            deletePromises.push(cloudinary.uploader.destroy(image.public_id));
           }
         });
       }
 
       // Delete video
       if (report.video?.public_id) {
-        deletePromises.push(
-          cloudinary.uploader.destroy(report.video.public_id, { resource_type: "video" })
-        );
+        deletePromises.push(cloudinary.uploader.destroy(report.video.public_id, { resource_type: "video" }));
       }
     }
 
@@ -3158,25 +3134,26 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     }
 
     // Delete all reports from database
-    await Report.deleteMany({ _id: { $in: resolvedReports.map(r => r._id) } });
+    await Report.deleteMany({ _id: { $in: resolvedReports.map((r) => r._id) } });
 
     res.status(statusCodes.OK).json({
       success: true,
-      msg: `Successfully archived and deleted ${resolvedReports.length} resolved reports${policeStationName ? ` from ${policeStationName}` : ''}`,
+      msg: `Successfully archived and deleted ${resolvedReports.length} resolved reports${
+        policeStationName ? ` from ${policeStationName}` : ""
+      }`,
       data: {
         reportsArchived: resolvedReports.length,
         reportsDeleted: resolvedReports.length,
         emailSent: emailResult.success,
         recipientEmail,
         dateRange: emailContext.dateRange,
-        policeStationFilter: policeStationName || 'All stations',
+        policeStationFilter: policeStationName || "All stations",
         includesImages: includeImages,
         totalMediaFiles: totalMediaFiles,
         mediaFilesDeleted: deletePromises.length,
-        mediaIncludedInEmail: true
-      }
+        mediaIncludedInEmail: true,
+      },
     });
-
   } catch (error) {
     console.error("Error archiving resolved reports:", error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
@@ -3191,7 +3168,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     const { recipientEmail, startDate, endDate, policeStationId, includeImages = true } = req.body;
 
 //     // Authorization check - only admins can archive reports
-//     if (!req.user.roles.some(role => 
+//     if (!req.user.roles.some(role =>
 //       ["police_admin", "city_admin", "super_admin"].includes(role)
 //     )) {
 //       return res.status(statusCodes.FORBIDDEN).json({
@@ -3210,7 +3187,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 
 //     // Build query for resolved reports
 //     let query = { status: "Resolved" };
-    
+
 //     // Add date range filter
 //     if (startDate && endDate) {
 //       query.createdAt = {
@@ -3229,7 +3206,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //           msg: "Police station not found",
 //         });
 //       }
-      
+
 //       query.assignedPoliceStation = policeStationId;
 //     }
 
@@ -3295,7 +3272,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     // Process each report
 //     for (let i = 0; i < resolvedReports.length; i++) {
 //       const report = resolvedReports[i];
-      
+
 //       // Find resolved date from status history
 //       const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
 //       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
@@ -3303,19 +3280,19 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //       // Count media files for this report
 //       let mediaCount = 0;
 //       let mediaTypes = [];
-      
+
 //       if (report.personInvolved.mostRecentPhoto?.url) {
 //         mediaCount++;
 //         mediaTypes.push('Main Photo');
 //         totalMediaFiles++;
 //       }
-      
+
 //       if (report.additionalImages?.length > 0) {
 //         mediaCount += report.additionalImages.length;
 //         mediaTypes.push(`${report.additionalImages.length} Additional Images`);
 //         totalMediaFiles += report.additionalImages.length;
 //       }
-      
+
 //       if (report.video?.url) {
 //         mediaCount++;
 //         mediaTypes.push('Video');
@@ -3340,8 +3317,8 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //         status: report.status,
 //         createdAt: new Date(report.createdAt).toLocaleDateString(),
 //         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
-//         mediaNote: mediaCount > 0 ? 
-//           `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` : 
+//         mediaNote: mediaCount > 0 ?
+//           `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` :
 //           'No media files'
 //       };
 
@@ -3402,7 +3379,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     const reportsWithMedia = resolvedReports.map(report => {
 //       const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
 //       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
-      
+
 //       return {
 //         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
 //         type: report.type,
@@ -3463,7 +3440,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     // After successful email, update reports status to Archived
 //     await Report.updateMany(
 //       { _id: { $in: resolvedReports.map(r => r._id) } },
-//       { 
+//       {
 //         status: "Archived",
 //         archivedAt: new Date(),
 //         archivedBy: req.user._id
@@ -3500,7 +3477,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     const { recipientEmail, startDate, endDate, includeImages = true } = req.body;
 
 //     // Authorization check - only admins can archive reports
-//     if (!req.user.roles.some(role => 
+//     if (!req.user.roles.some(role =>
 //       ["police_admin", "city_admin", "super_admin"].includes(role)
 //     )) {
 //       return res.status(statusCodes.FORBIDDEN).json({
@@ -3519,7 +3496,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 
 //     // Build query for resolved reports
 //     let query = { status: "Resolved" };
-    
+
 //     if (startDate && endDate) {
 //       query.createdAt = {
 //         $gte: new Date(startDate),
@@ -3582,7 +3559,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     // Process each report
 //     for (let i = 0; i < resolvedReports.length; i++) {
 //       const report = resolvedReports[i];
-      
+
 //       // Find resolved date from status history
 //       const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
 //       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
@@ -3590,19 +3567,19 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //       // Count media files for this report
 //       let mediaCount = 0;
 //       let mediaTypes = [];
-      
+
 //       if (report.personInvolved.mostRecentPhoto?.url) {
 //         mediaCount++;
 //         mediaTypes.push('Main Photo');
 //         totalMediaFiles++;
 //       }
-      
+
 //       if (report.additionalImages?.length > 0) {
 //         mediaCount += report.additionalImages.length;
 //         mediaTypes.push(`${report.additionalImages.length} Additional Images`);
 //         totalMediaFiles += report.additionalImages.length;
 //       }
-      
+
 //       if (report.video?.url) {
 //         mediaCount++;
 //         mediaTypes.push('Video');
@@ -3627,8 +3604,8 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //         status: report.status,
 //         createdAt: new Date(report.createdAt).toLocaleDateString(),
 //         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
-//         mediaNote: mediaCount > 0 ? 
-//           `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` : 
+//         mediaNote: mediaCount > 0 ?
+//           `${mediaCount} files: ${mediaTypes.join(', ')} - See email for images` :
 //           'No media files'
 //       };
 
@@ -3689,7 +3666,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     const reportsWithMedia = resolvedReports.map(report => {
 //       const resolvedEntry = report.statusHistory?.find(entry => entry.newStatus === "Resolved");
 //       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
-      
+
 //       return {
 //         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
 //         type: report.type,
@@ -3749,7 +3726,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     // After successful email, update reports status to Archived
 //     await Report.updateMany(
 //       { _id: { $in: resolvedReports.map(r => r._id) } },
-//       { 
+//       {
 //         status: "Archived",
 //         archivedAt: new Date(),
 //         archivedBy: req.user._id
@@ -3779,5 +3756,3 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //     });
 //   }
 // });
-
-
