@@ -1152,6 +1152,11 @@ async function handlePersonNameInput(psid, text, session) {
   let firstName = nameParts[0];
   let lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
   
+   if (!text) {
+    return await sendResponse(psid, { 
+      text: "Please provide the person's name as text, not an image or attachment:" 
+    });
+  }
   if (!firstName || !lastName) {
     return await sendResponse(psid, { 
       text: "Please provide both first and last name (e.g., Juan Dela Cruz):" 
@@ -1316,6 +1321,13 @@ async function handlePhotoInput(psid, message, session) {
 }
 
 async function handleCredentialInput(psid, text, session) {
+  // Check if text exists before trying to use trim()
+  if (!text) {
+    return await sendResponse(psid, {
+      text: "Please provide your credentials as text (not an image or attachment):"
+    });
+  }
+
   if (text.trim().length < 5) {
     return await sendResponse(psid, {
       text: "Please provide more detailed credentials for verification:"
