@@ -408,14 +408,7 @@ async function handlePersonAgeInput(psid, text, session) {
 // NEW: Handle description input
 // Handle description input
 async function handleDescriptionInput(psid, text, session) {
-  // Check if text exists
-  if (!text) {
-    return await sendResponse(psid, { 
-      text: "Please provide a description as text, not an image or attachment:" 
-    });
-  }
-  
-  if (text.trim().length < 10) {
+  if (!text || text.trim().length < 10) {
     return await sendResponse(psid, { 
       text: "Please provide more details about what happened. Include when the person was last seen, what they were wearing, and any circumstances about their disappearance:" 
     });
@@ -423,19 +416,19 @@ async function handleDescriptionInput(psid, text, session) {
   
   console.log(`Saving description for ${psid}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
   
-  // Update session with description
+  // Update session with description - Save to both fields to ensure compatibility
   await MessengerReportSession.findOneAndUpdate(
     { psid },
     { 
       'data.messengerDescription': text.trim(),
+      'data.description': text.trim(),
       currentStep: 'LOCATION'
     },
     { new: true }
   );
   
-  // Ask for location with examples
   await sendResponse(psid, { 
-    text: "Please provide the last known location with as much detail as possible. Example:\n\n\"123 Maginhawa St, Brgy UP Village, Quezon City, 1101\"\n\nor\n\n\"SM North EDSA, Quezon City\"" 
+    text: "Thank you for the description. Now, please provide the last known location with as much detail as possible:" 
   });
 }
 
@@ -728,7 +721,7 @@ async function handleDescriptionInput(psid, text, session) {
   );
   
   await sendResponse(psid, { 
-    text: "Thank you for the description. Now, please provide the last known location with as much detail as possible:" 
+    text: "Thank you for the description. Now, please provide the last known location with as much detail as possible (e.g., street address, barangay, city, zip code):" 
   });
 }
 
@@ -765,7 +758,7 @@ async function submitReport(psid) {
       }
     };
     
-    // Extract the description - this might be in different locations depending on the conversation flow
+    // Extract the description - from messengerDescription or description field
     const description = reportData.messengerDescription || reportData.description || "";
     console.log(`Description for report: "${description.substring(0, 50)}${description.length > 50 ? '...' : ''}"`);
     
@@ -788,6 +781,25 @@ async function submitReport(psid) {
     // Find user if exists
     let user = await User.findOne({ messengerPSID: psid });
     let isAnonymous = !user;
+    
+    // Create a temporary user if needed
+    if (!user) {
+      try {
+        console.log("No user found with PSID:", psid, "- Creating temporary user");
+        user = await User.create({
+          messengerPSID: psid,
+          roles: ["citizen"],
+          firstName: "Messenger",
+          lastName: "User",
+          email: `messenger_${psid}@temp.agapayalert.com`,
+          isActive: true
+        });
+        console.log("Created temporary user:", user._id);
+      } catch (userCreateError) {
+        console.error("Failed to create temporary user:", userCreateError);
+        // Continue without user - the report will be anonymous
+      }
+    }
     
     // Get user's selected police station if available, otherwise auto-assign
     const selectedPoliceStationId = reportData.selectedPoliceStation || null;
@@ -831,9 +843,8 @@ async function submitReport(psid) {
       },
       assignedPoliceStation: assignedStation._id,
       broadcastConsent: true,
-      description: description, // Set description directly
-      // Use valid enum values for stationAssignmentType based on your schema
-      stationAssignmentType: selectedPoliceStationId ? "manual" : "automatic", // Check your actual enum values
+      messengerDescription: description, // FIXED: Use messengerDescription instead of description
+      stationAssignmentType: selectedPoliceStationId ? "manual" : "automatic", // FIXED: Use correct enum values
       isAnonymous: isAnonymous,
       messengerPSID: psid,
       validCredential: reportData.credential || "Messenger report",
@@ -863,7 +874,7 @@ async function submitReport(psid) {
       lastName: report.personInvolved.lastName,
       coordinates: report.location.coordinates,
       photoUrl: report.personInvolved.mostRecentPhoto.url,
-      description: description ? "Set" : "Not provided"
+      descriptionLength: description ? description.length : 0
     });
     
     try {
@@ -896,12 +907,10 @@ async function submitReport(psid) {
       if (saveError.name === 'ValidationError') {
         console.error("Validation errors:", saveError.errors);
         
-        const errorMessages = Object.keys(saveError.errors).map(field => 
-          `${field}: ${saveError.errors[field].message}`
-        ).join('\n');
+        const errorFields = Object.keys(saveError.errors).join(", ");
         
         await sendResponse(psid, { 
-          text: `We encountered validation errors while creating your report. Please try again or use the AgapayAlert app.` 
+          text: `We encountered validation errors with these fields: ${errorFields}. Please try again or use the AgapayAlert app.` 
         });
       } else {
         await sendResponse(psid, { 
