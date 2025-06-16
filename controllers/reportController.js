@@ -1138,7 +1138,7 @@ exports.getReports = asyncHandler(async (req, res) => {
       address: req.user.address,
     });
 
-    const { status, type, startDate, endDate, page = 1, limit = 10 } = req.query;
+    const { status, type, startDate, endDate, page = 1, limit = 10, query } = req.query;
     const currentPage = parseInt(page);
     const limitPerPage = parseInt(limit);
 
@@ -1155,6 +1155,15 @@ exports.getReports = asyncHandler(async (req, res) => {
         $gte: new Date(startDate),
         $lte: new Date(endDate),
       };
+    }
+
+    if (query && query.trim() !== "") {
+      const searchRegex = new RegExp(query, "i");
+      matchStage.$or = [
+        { caseId: searchRegex },
+        { "personInvolved.firstName": searchRegex },
+        { "personInvolved.lastName": searchRegex }
+      ];
     }
 
     console.log("Base match stage:", JSON.stringify(matchStage, null, 2));
