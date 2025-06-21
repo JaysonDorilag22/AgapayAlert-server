@@ -24,7 +24,7 @@ router.delete('/:reportId', protect, authorizeRoles(roles.SUPER_ADMIN.role), rep
 router.post('/assign-station', protect, authorizeRoles(roles.POLICE_ADMIN.role), reportController.assignPoliceStation);
 router.post('/assign-officer', protect, authorizeRoles(roles.POLICE_ADMIN.role, ), reportController.assignOfficer);
 router.put('/update-status/:reportId', protect, reportController.updateUserReport);
-router.get('/public-feed', protect, reportController.getPublicFeed);
+router.get('/public-feed', reportController.getPublicFeed);
 router.get('/cities', reportController.getReportCities);
 router.get('/user-reports', protect, reportController.getUserReports);
 router.get('/user-report/:reportId', protect, reportController.getUserReportDetails);

@@ -3,22 +3,221 @@ const PoliceStation = require('../models/policeStationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
 
-// This function filters data based on user roles:
+// Insomnia Sample Requests for Demographics Analysis API/
+// Base URL
+// Filter Combinations
+// 1. No filters (get all data)
+// http://localhost:3000/api/v1/charts/demographics
+// 2. Filter by age category
+// http://localhost:3000/api/v1/charts/demographics?ageCategory=adult
+// 3. Filter by location
+// http://localhost:3000/api/v1/charts/demographics?city=SampleCity
+// 4. Filter by police station
+// http://localhost:3000/api/v1/charts/demographics?policeStationId=12345
+// 5. Filter by date range
+// http://localhost:3000/api/v1/charts/demographics?startDate=2023-01-01&endDate=2023-12-31
+// 6. Filter by report type
+// http://localhost:3000/api/v1/charts/demographics?reportType=Missing
+// 7. Filter by gender
+// http://localhost:3000/api/v1/charts/demographics?gender=male
+// 8. Combined filters
+// http://localhost:3000/api/v1/charts/demographics?ageCategory=adult&city=SampleCity&policeStationId=12345&startDate=2023-01-01&endDate=2023-12-31&reportType=missing
 
-// Police Officer/Admin
 
-// Can only see reports from their assigned police station
-// Filtered by: assignedPoliceStation
-// City Admin
+// User Demographics Analysis with age categories
+exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
+  try {
+    const {
+      ageCategory,
+      city,
+      barangay,
+      policeStationId,
+      startDate,
+      endDate,
+      reportType,
+      gender
+    } = req.query;
 
-// Can see all reports in their city
-// Shows reports that are either:
-// Located in their city OR
-// Assigned to any police station in their city
-// Super Admin
+    // Get base query from role
+    let query = await getRoleBasedQuery(req.user);
 
-// No filters applied
-// Can see all reports nationwide
+    // Add filters to query
+    if (city) query['location.address.city'] = city;
+    if (barangay) query['location.address.barangay'] = barangay;
+    if (policeStationId) query.assignedPoliceStation = policeStationId;
+    if (reportType) query.type = reportType;
+
+    // Handle age category filter if provided
+    if (ageCategory) {
+      const ageRanges = {
+        'infant': { min: 0, max: 2 },
+        'child': { min: 3, max: 12 },
+        'teen': { min: 13, max: 19 },
+        'young_adult': { min: 20, max: 35 },
+        'adult': { min: 36, max: 59 },
+        'senior': { min: 60, max: 150 }
+      };
+
+      if (ageRanges[ageCategory]) {
+        query['personInvolved.age'] = { 
+          $gte: ageRanges[ageCategory].min, 
+          $lte: ageRanges[ageCategory].max 
+        };
+      }
+    }
+
+    // Handle gender filter
+    if (gender) {
+      query['personInvolved.gender'] = gender;
+    }
+
+    // Date range filter
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+
+    // Get reports with needed fields
+    const reports = await Report.find(query)
+      .populate('reporter', 'age address gender')
+      .populate('assignedPoliceStation', 'name address')
+      .select('personInvolved location type status createdAt')
+      .lean();
+
+    // Process reports into statistical categories
+    const stats = {
+      total: reports.length,
+      byAgeCategory: {},
+      byCity: {},
+      byBarangay: {},
+      byGender: {},
+      byPoliceStation: {},
+      byReportType: {},
+      byStatus: {}
+    };
+    
+    // Process each report to build statistics
+    reports.forEach(report => {
+      // Age category grouping
+      const age = report.personInvolved.age || 0;
+      let ageCategory;
+      if (age <= 2) ageCategory = 'Infant (0-2)';
+      else if (age <= 12) ageCategory = 'Child (3-12)';
+      else if (age <= 19) ageCategory = 'Teen (13-19)';
+      else if (age <= 35) ageCategory = 'Young Adult (20-35)';
+      else if (age <= 59) ageCategory = 'Adult (36-59)';
+      else ageCategory = 'Senior (60+)';
+
+      stats.byAgeCategory[ageCategory] = (stats.byAgeCategory[ageCategory] || 0) + 1;
+
+      // City grouping
+      const city = report.location.address.city;
+      if (city) {
+        stats.byCity[city] = (stats.byCity[city] || 0) + 1;
+      }
+
+      // Barangay grouping
+      const barangay = report.location.address.barangay;
+      if (barangay) {
+        stats.byBarangay[barangay] = (stats.byBarangay[barangay] || 0) + 1;
+      }
+
+      // Gender grouping
+      const gender = report.personInvolved.gender || 'Unknown';
+      stats.byGender[gender] = (stats.byGender[gender] || 0) + 1;
+
+      // Police station grouping
+      if (report.assignedPoliceStation) {
+        const stationName = report.assignedPoliceStation.name;
+        stats.byPoliceStation[stationName] = (stats.byPoliceStation[stationName] || 0) + 1;
+      }
+
+      // Report type grouping
+      const reportType = report.type;
+      stats.byReportType[reportType] = (stats.byReportType[reportType] || 0) + 1;
+
+      // Status grouping
+      const status = report.status;
+      stats.byStatus[status] = (stats.byStatus[status] || 0) + 1;
+    });
+
+    // Convert stats to chart-friendly format
+    const formatForChart = (data) => {
+      const labels = Object.keys(data);
+      const values = labels.map(label => data[label]);
+      return { labels, values };
+    };
+    
+    // Define age category order for consistent display
+    const ageCategoryOrder = [
+      'Infant (0-2)', 
+      'Child (3-12)', 
+      'Teen (13-19)', 
+      'Young Adult (20-35)', 
+      'Adult (36-59)', 
+      'Senior (60+)'
+    ];
+    
+    // Format age categories with proper order
+    const formattedAgeCategories = {
+      labels: ageCategoryOrder.filter(category => stats.byAgeCategory[category] !== undefined),
+      values: ageCategoryOrder.filter(category => stats.byAgeCategory[category] !== undefined)
+        .map(category => stats.byAgeCategory[category])
+    };
+
+    // Prepare response data
+    const responseData = {
+      overview: {
+        totalReports: stats.total,
+      },
+      charts: {
+        byAgeCategory: formattedAgeCategories,
+        byCity: formatForChart(stats.byCity),
+        byBarangay: formatForChart(stats.byBarangay),
+        byGender: formatForChart(stats.byGender),
+        byPoliceStation: formatForChart(stats.byPoliceStation),
+        byReportType: formatForChart(stats.byReportType),
+        byStatus: formatForChart(stats.byStatus)
+      },
+      filters: {
+        appliedFilters: {
+          ageCategory,
+          city,
+          barangay,
+          policeStationId,
+          startDate,
+          endDate,
+          reportType,
+          gender
+        },
+        availableCategories: {
+          ageCategories: [
+            { value: 'infant', label: 'Infant (0-2)' },
+            { value: 'child', label: 'Child (3-12)' },
+            { value: 'teen', label: 'Teen (13-19)' },
+            { value: 'young_adult', label: 'Young Adult (20-35)' },
+            { value: 'adult', label: 'Adult (36-59)' },
+            { value: 'senior', label: 'Senior (60+)' }
+          ]
+        }
+      }
+    };
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Error in getUserDemographicsAnalysis:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 
 // Helper for role-based queries
 const getRoleBasedQuery = async (user, baseQuery = {}) => {
@@ -322,121 +521,6 @@ exports.getMonthlyTrend = asyncHandler(async (req, res) => {
     });
   }
 });
-
-// Location Hotspots Chart with Predictive Analysis
-// exports.getLocationHotspots = asyncHandler(async (req, res) => {
-//     try {
-//       const query = await getRoleBasedQuery(req.user);
-      
-//       // Get historical data by barangay and time
-//       const historicalData = await Report.aggregate([
-//         { $match: query },
-//         { 
-//           $group: {
-//             _id: {
-//               barangay: '$location.address.barangay',
-//               year: { $year: '$createdAt' },
-//               month: { $month: '$createdAt' }
-//             },
-//             count: { $sum: 1 }
-//           }
-//         },
-//         { $sort: { '_id.year': 1, '_id.month': 1 } }
-//       ]);
-  
-//       // Process data for each barangay
-//       const barangayStats = {};
-//       historicalData.forEach(entry => {
-//         const barangay = entry._id.barangay;
-//         if (!barangayStats[barangay]) {
-//           barangayStats[barangay] = {
-//             totalIncidents: 0,
-//             monthlyData: [],
-//             trend: 0
-//           };
-//         }
-        
-//         barangayStats[barangay].totalIncidents += entry.count;
-//         barangayStats[barangay].monthlyData.push(entry.count);
-//       });
-  
-//       // Calculate trends and predictions
-//       Object.keys(barangayStats).forEach(barangay => {
-//         const stats = barangayStats[barangay];
-//         const monthlyData = stats.monthlyData;
-        
-//         // Calculate trend (simple linear regression)
-//         if (monthlyData.length > 1) {
-//           const n = monthlyData.length;
-//           let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-          
-//           monthlyData.forEach((count, index) => {
-//             sumX += index;
-//             sumY += count;
-//             sumXY += index * count;
-//             sumXX += index * index;
-//           });
-  
-//           const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-//           stats.trend = slope;
-  
-//           // Predict next month's incidents
-//           stats.prediction = Math.max(0, Math.round(
-//             monthlyData[monthlyData.length - 1] + slope
-//           ));
-//         }
-  
-//         // Calculate risk score (0-100)
-//         const maxIncidents = Math.max(...Object.values(barangayStats).map(s => s.totalIncidents));
-//         stats.riskScore = Math.round((stats.totalIncidents / maxIncidents) * 100);
-//       });
-  
-//       // Sort barangays by risk score
-//       const sortedBarangays = Object.entries(barangayStats)
-//         .sort((a, b) => b[1].riskScore - a[1].riskScore)
-//         .slice(0, 10);
-  
-//       res.status(statusCodes.OK).json({
-//         success: true,
-//         data: {
-//           current: {
-//             labels: sortedBarangays.map(([barangay]) => barangay),
-//             datasets: [{
-//               label: 'Current Incidents',
-//               data: sortedBarangays.map(([_, stats]) => stats.totalIncidents),
-//               backgroundColor: '#36A2EB'
-//             }]
-//           },
-//           predictions: {
-//             labels: sortedBarangays.map(([barangay]) => barangay),
-//             datasets: [{
-//               label: 'Predicted Next Month',
-//               data: sortedBarangays.map(([_, stats]) => stats.prediction || 0),
-//               backgroundColor: '#FF6384'
-//             }]
-//           },
-//           analysis: sortedBarangays.map(([barangay, stats]) => ({
-//             barangay,
-//             currentIncidents: stats.totalIncidents,
-//             predictedNextMonth: stats.prediction || 0,
-//             riskScore: stats.riskScore,
-//             trend: stats.trend > 0 ? 'Increasing' : stats.trend < 0 ? 'Decreasing' : 'Stable',
-//             riskLevel: stats.riskScore >= 75 ? 'High' : stats.riskScore >= 50 ? 'Medium' : 'Low'
-//           }))
-//         }
-//       });
-  
-//     } catch (error) {
-//       console.error('Error in getLocationHotspots:', error);
-//       res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
-//         success: false,
-//         error: error.message
-//       });
-//     }
-//   });
-
-  // Example API call
-// GET /api/charts/hotspots?barangay=Lahug&reportType=Missing&startDate=2023-01-01&endDate=2023-12-31&cityFilter=Cebu City
 
 
 exports.getLocationHotspots = asyncHandler(async (req, res) => {
