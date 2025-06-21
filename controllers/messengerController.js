@@ -585,7 +585,7 @@ async function handlePhotoInput(psid, message, session) {
       
       // Ask for ID verification
       await sendResponse(psid, {
-        text: "Please provide a valid ID or any credentials for verification (ID type and ID number):"
+        text: "Please provide yout valid ID or any credentials for verification (ID type and ID number):"
       });
     } else {
       await sendResponse(psid, { 
@@ -928,7 +928,7 @@ async function submitReport(psid) {
           : "";
       
       await sendResponse(psid, { 
-        text: `Thank you. Your report has been submitted successfully!\n\nCase ID: ${savedReport.caseId}\n\nIt has been assigned to ${assignedStation.name}.${descriptionNote}. Please go to your assigned police station for further assistance.` 
+        text: `Thank you. Your report has been submitted successfully!\n\nCase ID: ${savedReport.caseId}\n\nIt has been assigned to ${assignedStation.name}.${descriptionNote} Please go to your assigned police station for further assistance.` 
       });
     } catch (saveError) {
       console.error("Error saving report:", saveError);

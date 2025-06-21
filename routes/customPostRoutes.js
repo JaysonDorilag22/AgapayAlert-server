@@ -3,10 +3,16 @@ const router = express.Router();
 const customPostController = require('../controllers/customPostController');
 const { protect } = require('../middlewares/authMiddleware');
 const authorizeRoles = require('../middlewares/roleMiddleware');
+const multer = require('multer');
+
+// Configure multer for file uploads
+const upload = multer({ dest: 'uploads/' });
+
 // Create custom post (with media upload)
 router.post('/', 
   protect, 
   authorizeRoles(['police_officer', 'police_admin', 'city_admin', 'super_admin']),
+  upload.array('images', 5), // Allow up to 5 images
   customPostController.createCustomPost
 );
 
@@ -17,18 +23,11 @@ router.get('/',
   customPostController.getCustomPosts
 );
 
-// Publish custom post
-router.post('/:postId/publish', 
+// Update post status (Draft/Published)
+router.patch('/:postId/status', 
   protect, 
-  authorizeRoles(['police_admin', 'city_admin', 'super_admin']),
-  customPostController.publishCustomPost
-);
-
-// Moderate custom post (approve/reject)
-router.patch('/:postId/moderate', 
-  protect, 
-  authorizeRoles(['police_admin', 'city_admin', 'super_admin']),
-  customPostController.moderateCustomPost
+  authorizeRoles(['police_officer', 'police_admin', 'city_admin', 'super_admin']),
+  customPostController.updatePostStatus
 );
 
 // Delete custom post
