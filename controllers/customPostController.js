@@ -56,6 +56,42 @@ exports.createCustomPost = asyncHandler(async (req, res) => {
   }
 });
 
+exports.getPublicCustomPosts = asyncHandler(async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.query;
+    
+    // Only show published posts
+    const query = { status: 'Published' };
+
+    const posts = await CustomPost.find(query)
+      .populate('author', 'firstName lastName')
+      .populate('policeStation', 'name address')
+      .select('caption images createdAt')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit));
+
+    const total = await CustomPost.countDocuments(query);
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        posts,
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        total
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching public custom posts:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      msg: 'Error fetching public custom posts',
+      error: error.message
+    });
+  }
+});
+
 // Get all custom posts
 exports.getCustomPosts = asyncHandler(async (req, res) => {
   try {

@@ -9,9 +9,8 @@ const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
 
 // Create custom post (with media upload)
-router.post('/', 
+router.post('/create', 
   protect, 
-  authorizeRoles(['police_officer', 'police_admin', 'city_admin', 'super_admin']),
   upload.array('images', 5), // Allow up to 5 images
   customPostController.createCustomPost
 );
@@ -19,21 +18,20 @@ router.post('/',
 // Get all custom posts
 router.get('/', 
   protect, 
-  authorizeRoles(['police_officer', 'police_admin', 'city_admin', 'super_admin']),
   customPostController.getCustomPosts
 );
+
+router.get('/public', customPostController.getPublicCustomPosts);
 
 // Update post status (Draft/Published)
 router.patch('/:postId/status', 
   protect, 
-  authorizeRoles(['police_officer', 'police_admin', 'city_admin', 'super_admin']),
   customPostController.updatePostStatus
 );
 
 // Delete custom post
 router.delete('/:postId', 
   protect, 
-  authorizeRoles(['police_officer', 'police_admin', 'city_admin', 'super_admin']),
   customPostController.deleteCustomPost
 );
 
