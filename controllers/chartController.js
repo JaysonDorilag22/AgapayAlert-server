@@ -1,4 +1,5 @@
 const Report = require('../models/reportModel');
+const User = require('../models/userModel');
 const PoliceStation = require('../models/policeStationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
@@ -211,6 +212,190 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
 
   } catch (error) {
     console.error('Error in getUserDemographicsAnalysis:', error);
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Police Officer Rankings
+exports.getOfficerRankings = asyncHandler(async (req, res) => {
+  try {
+    // Access control
+    const userRole = req.user.roles[0];
+    if (userRole === 'user' || userRole === 'police_officer') {
+      return res.status(statusCodes.FORBIDDEN).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    // Dynamic filters
+    const {
+      ageCategory,
+      city,
+      barangay,
+      policeStationId,
+      startDate,
+      endDate,
+      reportType,
+      gender
+    } = req.query;
+
+    // Officer filter base
+    let officerQuery = { roles: 'police_officer' };
+
+    // Police admin: restrict to their city
+    if (userRole === 'police_admin') {
+      if (!req.user.address?.city) {
+        return res.status(statusCodes.BAD_REQUEST).json({
+          success: false,
+          message: 'Police admin must have an assigned city'
+        });
+      }
+      officerQuery['address.city'] = req.user.address.city;
+    }
+
+    // City filter
+    if (city) officerQuery['address.city'] = city;
+    if (barangay) officerQuery['address.barangay'] = barangay;
+    if (policeStationId) officerQuery.policeStation = policeStationId;
+    if (gender) officerQuery.gender = gender;
+
+    // Get all officers matching filters
+    const officers = await User.find(officerQuery)
+      .select('_id firstName lastName rank policeStation address')
+      .populate('policeStation', 'name address')
+      .lean();
+
+    if (!officers.length) {
+      return res.status(statusCodes.OK).json({
+        success: true,
+        data: []
+      });
+    }
+
+    // Build report query for stats
+    let reportQuery = {
+      assignedOfficer: { $in: officers.map(o => o._id) }
+    };
+
+    // Report filters
+    if (reportType) reportQuery.type = reportType;
+    if (startDate || endDate) {
+      reportQuery.createdAt = {};
+      if (startDate) reportQuery.createdAt.$gte = new Date(startDate);
+      if (endDate) reportQuery.createdAt.$lte = new Date(endDate);
+    }
+    if (city) reportQuery['location.address.city'] = city;
+    if (barangay) reportQuery['location.address.barangay'] = barangay;
+
+    // Age category filter (on personInvolved.age)
+    if (ageCategory) {
+      const ageRanges = {
+        'infant': { min: 0, max: 2 },
+        'child': { min: 3, max: 12 },
+        'teen': { min: 13, max: 19 },
+        'young_adult': { min: 20, max: 35 },
+        'adult': { min: 36, max: 59 },
+        'senior': { min: 60, max: 150 }
+      };
+      if (ageRanges[ageCategory]) {
+        reportQuery['personInvolved.age'] = {
+          $gte: ageRanges[ageCategory].min,
+          $lte: ageRanges[ageCategory].max
+        };
+      }
+    }
+
+    // Gender filter (on personInvolved.gender)
+    if (gender) reportQuery['personInvolved.gender'] = gender;
+
+    // Aggregate stats per officer
+    const stats = await Report.aggregate([
+      { $match: reportQuery },
+      {
+        $group: {
+          _id: '$assignedOfficer',
+          totalAssigned: { $sum: 1 },
+          resolved: { $sum: { $cond: [{ $eq: ['$status', 'Resolved'] }, 1, 0] } },
+          underInvestigation: { $sum: { $cond: [{ $eq: ['$status', 'Under Investigation'] }, 1, 0] } },
+          transferred: { $sum: { $cond: [{ $eq: ['$status', 'Transferred'] }, 1, 0] } },
+          pending: { $sum: { $cond: [{ $eq: ['$status', 'Pending'] }, 1, 0] } },
+          byType: {
+            $push: { type: '$type', status: '$status' }
+          }
+        }
+      }
+    ]);
+
+    // Map stats to officers
+    const officerMap = {};
+    officers.forEach(officer => {
+      officerMap[officer._id.toString()] = {
+        ...officer,
+        totalAssigned: 0,
+        resolved: 0,
+        underInvestigation: 0,
+        transferred: 0,
+        pending: 0,
+        resolutionRate: 0,
+        byType: {}
+      };
+    });
+
+    stats.forEach(stat => {
+      const o = officerMap[stat._id.toString()];
+      if (o) {
+        o.totalAssigned = stat.totalAssigned;
+        o.resolved = stat.resolved;
+        o.underInvestigation = stat.underInvestigation;
+        o.transferred = stat.transferred;
+        o.pending = stat.pending;
+        o.resolutionRate = stat.totalAssigned ? Math.round((stat.resolved / stat.totalAssigned) * 100) : 0;
+
+        // By type breakdown
+        stat.byType.forEach(item => {
+          if (!o.byType[item.type]) o.byType[item.type] = { assigned: 0, resolved: 0 };
+          o.byType[item.type].assigned += 1;
+          if (item.status === 'Resolved') o.byType[item.type].resolved += 1;
+        });
+      }
+    });
+
+        // Get sortBy and sortOrder from query, with defaults
+    const { sortBy = 'totalAssigned', sortOrder = 'desc' } = req.query;
+
+    // Allowed sort fields
+    const allowedSortFields = [
+      'totalAssigned', 'resolved', 'underInvestigation', 'transferred', 'pending', 'resolutionRate'
+    ];
+
+    // Validate sortBy
+    const sortField = allowedSortFields.includes(sortBy) ? sortBy : 'totalAssigned';
+
+    // Sort officers dynamically
+    const ranked = Object.values(officerMap).sort((a, b) => {
+      if (sortOrder === 'asc') {
+        return a[sortField] - b[sortField];
+      } else {
+        return b[sortField] - a[sortField];
+      }
+    });
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: ranked,
+      filters: {
+        applied: { ageCategory, city, barangay, policeStationId, startDate, endDate, reportType, gender },
+        sortBy,
+        sortOrder
+      }
+    });
+
+  } catch (error) {
+    console.error('Error in getOfficerRankings:', error);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       error: error.message

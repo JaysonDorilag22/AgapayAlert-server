@@ -19,5 +19,6 @@ router.get('/monthly-trend', chartController.getMonthlyTrend);
 router.get('/location-hotspots', chartController.getLocationHotspots);
 router.get('/basic-analytics', chartController.getBasicAnalytics);
 router.get('/demographics', chartController.getUserDemographicsAnalysis);
+router.get('/officer-rankings', chartController.getOfficerRankings);
 
 module.exports = router;
