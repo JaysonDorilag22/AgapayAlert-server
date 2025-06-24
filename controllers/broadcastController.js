@@ -17,6 +17,9 @@ exports.publishReport = asyncHandler(async (req, res) => {
       broadcastType,
       scope = { type: "city", city: null, radius: null }
     } = req.body;
+    console.log("Report ID:", reportId);
+    console.log("Broadcast Type:", broadcastType);
+    console.log("Scope:", scope);
 
     // 1. Validate Report
     const report = await Report.findById(reportId);

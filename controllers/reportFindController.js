@@ -506,6 +506,7 @@ exports.verifyFinderReport = asyncHandler(async (req, res) => {
 
 exports.getFinderReportsByReportId = asyncHandler(async (req, res) => {
   const { reportId } = req.params;
+  console.log("reportId", reportId);
 
   const originalReport = await Report.findById(reportId);
   if (!originalReport) {
@@ -513,6 +514,7 @@ exports.getFinderReportsByReportId = asyncHandler(async (req, res) => {
       msg: "Original report not found",
     });
   }
+  console.log("originalReport", originalReport);
 
   const finderReports = await FinderReport.find({ originalReport: reportId })
     .populate("finder", "-password")
@@ -523,6 +525,7 @@ exports.getFinderReportsByReportId = asyncHandler(async (req, res) => {
     count: finderReports.length,
     finderReports,
   });
+  console.log("finderReports", finderReports);
 });
 
 // Delete finder report

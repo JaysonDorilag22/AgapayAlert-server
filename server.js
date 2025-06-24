@@ -12,6 +12,7 @@ const errorHandler = require('./middlewares/errorHandler');
 const MongoStore = require('connect-mongo');
 const cron = require('node-cron');
 const mongoose = require('mongoose');
+const axios = require('axios');
 // Route imports
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
@@ -142,6 +143,33 @@ const getMongoDBStorageInfo = async () => {
     throw error;
   }
 };
+app.get('/api/v1/proxy/cities', async (req, res) => {
+  try {
+    const response = await axios.get('https://psgc.gitlab.io/api/cities.json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch cities', error: error.message });
+  }
+});
+
+app.get('/api/v1/proxy/barangays/:cityCodes', async (req, res) => {
+  try {
+    const { cityCodes } = req.params;
+    const codesArray = cityCodes.split(',');
+    const allBarangays = [];
+
+    for (const code of codesArray) {
+      const response = await axios.get(`https://psgc.gitlab.io/api/cities/${code}/barangays.json`);
+      allBarangays.push(...response.data);
+    }
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(allBarangays);
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch barangays', error: error.message });
+  }
+});
 
 app.get("/api/v1/storage/info", async (req, res) => {
   try {

@@ -36,7 +36,9 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
       startDate,
       endDate,
       reportType,
-      gender
+      gender,
+      prevStartDate,
+      prevEndDate
     } = req.query;
 
     // Get base query from role
@@ -47,8 +49,6 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
     if (barangay) query['location.address.barangay'] = barangay;
     if (policeStationId) query.assignedPoliceStation = policeStationId;
     if (reportType) query.type = reportType;
-
-    // Handle age category filter if provided
     if (ageCategory) {
       const ageRanges = {
         'infant': { min: 0, max: 2 },
@@ -58,7 +58,6 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
         'adult': { min: 36, max: 59 },
         'senior': { min: 60, max: 150 }
       };
-
       if (ageRanges[ageCategory]) {
         query['personInvolved.age'] = { 
           $gte: ageRanges[ageCategory].min, 
@@ -66,17 +65,21 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
         };
       }
     }
-
-    // Handle gender filter
-    if (gender) {
-      query['personInvolved.gender'] = gender;
-    }
-
-    // Date range filter
+    if (gender) query['personInvolved.gender'] = gender;
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
       if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+
+    // For trend/percentage change, get previous period data if requested
+    let prevQuery = null, prevTotal = null;
+    if (prevStartDate || prevEndDate) {
+      prevQuery = { ...query };
+      prevQuery.createdAt = {};
+      if (prevStartDate) prevQuery.createdAt.$gte = new Date(prevStartDate);
+      if (prevEndDate) prevQuery.createdAt.$lte = new Date(prevEndDate);
+      prevTotal = await Report.countDocuments(prevQuery);
     }
 
     // Get reports with needed fields
@@ -86,9 +89,20 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
       .select('personInvolved location type status createdAt')
       .lean();
 
+    const total = reports.length;
+
+    // Helper: count and percent
+    const countAndPercent = (obj, total) => {
+      return Object.entries(obj).map(([key, count]) => ({
+        label: key,
+        count,
+        percent: total ? ((count / total) * 100).toFixed(1) : "0.0"
+      }));
+    };
+
     // Process reports into statistical categories
     const stats = {
-      total: reports.length,
+      total,
       byAgeCategory: {},
       byCity: {},
       byBarangay: {},
@@ -97,32 +111,35 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
       byReportType: {},
       byStatus: {}
     };
-    
+
+    // For cross-category and alarming/good numbers
+    const crossCategory = {
+      ageByBarangay: {},
+      typeByBarangay: {},
+      unresolvedByCity: {},
+      childrenByBarangay: {}
+    };
+
     // Process each report to build statistics
     reports.forEach(report => {
       // Age category grouping
       const age = report.personInvolved.age || 0;
-      let ageCategory;
-      if (age <= 2) ageCategory = 'Infant (0-2)';
-      else if (age <= 12) ageCategory = 'Child (3-12)';
-      else if (age <= 19) ageCategory = 'Teen (13-19)';
-      else if (age <= 35) ageCategory = 'Young Adult (20-35)';
-      else if (age <= 59) ageCategory = 'Adult (36-59)';
-      else ageCategory = 'Senior (60+)';
-
-      stats.byAgeCategory[ageCategory] = (stats.byAgeCategory[ageCategory] || 0) + 1;
+      let ageCat;
+      if (age <= 2) ageCat = 'Infant (0-2)';
+      else if (age <= 12) ageCat = 'Child (3-12)';
+      else if (age <= 19) ageCat = 'Teen (13-19)';
+      else if (age <= 35) ageCat = 'Young Adult (20-35)';
+      else if (age <= 59) ageCat = 'Adult (36-59)';
+      else ageCat = 'Senior (60+)';
+      stats.byAgeCategory[ageCat] = (stats.byAgeCategory[ageCat] || 0) + 1;
 
       // City grouping
       const city = report.location.address.city;
-      if (city) {
-        stats.byCity[city] = (stats.byCity[city] || 0) + 1;
-      }
+      if (city) stats.byCity[city] = (stats.byCity[city] || 0) + 1;
 
       // Barangay grouping
       const barangay = report.location.address.barangay;
-      if (barangay) {
-        stats.byBarangay[barangay] = (stats.byBarangay[barangay] || 0) + 1;
-      }
+      if (barangay) stats.byBarangay[barangay] = (stats.byBarangay[barangay] || 0) + 1;
 
       // Gender grouping
       const gender = report.personInvolved.gender || 'Unknown';
@@ -141,73 +158,148 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
       // Status grouping
       const status = report.status;
       stats.byStatus[status] = (stats.byStatus[status] || 0) + 1;
+
+      // Cross-category: age by barangay
+      if (barangay && ageCat) {
+        if (!crossCategory.ageByBarangay[barangay]) crossCategory.ageByBarangay[barangay] = {};
+        crossCategory.ageByBarangay[barangay][ageCat] = (crossCategory.ageByBarangay[barangay][ageCat] || 0) + 1;
+      }
+      // Cross-category: type by barangay
+      if (barangay && reportType) {
+        if (!crossCategory.typeByBarangay[barangay]) crossCategory.typeByBarangay[barangay] = {};
+        crossCategory.typeByBarangay[barangay][reportType] = (crossCategory.typeByBarangay[barangay][reportType] || 0) + 1;
+      }
+      // Unresolved by city
+      if (city && status !== "Resolved") {
+        crossCategory.unresolvedByCity[city] = (crossCategory.unresolvedByCity[city] || 0) + 1;
+      }
+      // Children by barangay
+      if (barangay && ageCat === "Child (3-12)") {
+        crossCategory.childrenByBarangay[barangay] = (crossCategory.childrenByBarangay[barangay] || 0) + 1;
+      }
     });
 
-    // Convert stats to chart-friendly format
-    const formatForChart = (data) => {
-      const labels = Object.keys(data);
-      const values = labels.map(label => data[label]);
-      return { labels, values };
-    };
-    
-    // Define age category order for consistent display
-    const ageCategoryOrder = [
-      'Infant (0-2)', 
-      'Child (3-12)', 
-      'Teen (13-19)', 
-      'Young Adult (20-35)', 
-      'Adult (36-59)', 
-      'Senior (60+)'
-    ];
-    
-    // Format age categories with proper order
-    const formattedAgeCategories = {
-      labels: ageCategoryOrder.filter(category => stats.byAgeCategory[category] !== undefined),
-      values: ageCategoryOrder.filter(category => stats.byAgeCategory[category] !== undefined)
-        .map(category => stats.byAgeCategory[category])
-    };
+    // Chart data
+    const formatForChart = (obj) => ({
+      labels: Object.keys(obj),
+      values: Object.values(obj)
+    });
+
+    // Top locations
+    const topN = (obj, n = 3) => Object.entries(obj)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, n)
+      .map(([label, count]) => ({ label, count }));
+
+    // Differential helpers
+    const genderArr = countAndPercent(stats.byGender, total);
+    const male = genderArr.find(g => g.label.toLowerCase() === "male") || { count: 0, percent: 0 };
+    const female = genderArr.find(g => g.label.toLowerCase() === "female") || { count: 0, percent: 0 };
+    const genderDiff = Math.abs(male.count - female.count);
+    const genderDiffPercent = total ? ((genderDiff / total) * 100).toFixed(1) : "0.0";
+    const genderDiffText = male.count > female.count
+      ? `There are ${genderDiffPercent}% more reports involving males than females.`
+      : female.count > male.count
+        ? `There are ${genderDiffPercent}% more reports involving females than males.`
+        : "Reports are evenly split between males and females.";
+
+    // Alarming/Good numbers
+    const maxChildBarangay = Object.entries(crossCategory.childrenByBarangay)
+      .sort((a, b) => b[1] - a[1])[0];
+    const avgChildBarangay = Object.values(crossCategory.childrenByBarangay).reduce((a, b) => a + b, 0) /
+      (Object.keys(crossCategory.childrenByBarangay).length || 1);
+    const alarmingChildText = maxChildBarangay && maxChildBarangay[1] > avgChildBarangay * 1.5
+      ? `High number of reports involving children (3-12) in ${maxChildBarangay[0]}: ${maxChildBarangay[1]}, which is above the average for other barangays (${avgChildBarangay.toFixed(1)}).`
+      : null;
+
+    // Most common report type
+    const typeArr = countAndPercent(stats.byReportType, total);
+    const mostCommonType = typeArr.sort((a, b) => b.count - a.count)[0];
+
+    // Status differential
+    const unresolved = (stats.byStatus["Pending"] || 0) + (stats.byStatus["Under Investigation"] || 0);
+    const unresolvedPercent = total ? ((unresolved / total) * 100).toFixed(1) : "0.0";
+
+    // Comparative/Trend
+    let trendText = "";
+    if (prevTotal !== null) {
+      const diff = total - prevTotal;
+      const percentChange = prevTotal ? ((diff / prevTotal) * 100).toFixed(1) : "0.0";
+      trendText = diff > 0
+        ? `Reports increased by ${percentChange}% compared to the previous period.`
+        : diff < 0
+          ? `Reports decreased by ${Math.abs(percentChange)}% compared to the previous period.`
+          : "No change in total reports compared to the previous period.";
+    }
+
+    // Top city/barangay/police station
+    const topCities = topN(stats.byCity);
+    const topBarangays = topN(stats.byBarangay);
+    const topStations = topN(stats.byPoliceStation);
+
+    // Cross-category: most reports involving children are from which barangay
+    const mostChildBarangay = maxChildBarangay ? maxChildBarangay[0] : null;
+
+    // Compose summary paragraph
+    const summaryParagraph = `
+      In this reporting period, a total of ${total} cases were recorded. 
+      The majority of reports involved ${typeArr.length ? typeArr[0].label : "N/A"}, accounting for ${typeArr.length ? typeArr[0].percent : "0"}% of all cases.
+      ${genderArr.length ? `Males were involved in ${male.percent}% of reports, while females accounted for ${female.percent}%` : ""}
+      ${topCities.length ? `The city with the highest number of reports was ${topCities[0].label}, with Barangay ${topBarangays[0]?.label || "N/A"} being the most affected area.` : ""}
+      Notably, ${unresolvedPercent}% of all cases remain unresolved, with ${mostCommonType ? mostCommonType.label : "N/A"} reports being the most common type.
+      ${trendText}
+      ${alarmingChildText ? alarmingChildText : ""}
+      These trends suggest a need for targeted interventions in high-report areas and among vulnerable age groups.
+    `.replace(/\s+/g, " ").trim();
 
     // Prepare response data
-    const responseData = {
-      overview: {
-        totalReports: stats.total,
-      },
-      charts: {
-        byAgeCategory: formattedAgeCategories,
-        byCity: formatForChart(stats.byCity),
-        byBarangay: formatForChart(stats.byBarangay),
-        byGender: formatForChart(stats.byGender),
-        byPoliceStation: formatForChart(stats.byPoliceStation),
-        byReportType: formatForChart(stats.byReportType),
-        byStatus: formatForChart(stats.byStatus)
-      },
-      filters: {
-        appliedFilters: {
-          ageCategory,
-          city,
-          barangay,
-          policeStationId,
-          startDate,
-          endDate,
-          reportType,
-          gender
-        },
-        availableCategories: {
-          ageCategories: [
-            { value: 'infant', label: 'Infant (0-2)' },
-            { value: 'child', label: 'Child (3-12)' },
-            { value: 'teen', label: 'Teen (13-19)' },
-            { value: 'young_adult', label: 'Young Adult (20-35)' },
-            { value: 'adult', label: 'Adult (36-59)' },
-            { value: 'senior', label: 'Senior (60+)' }
-          ]
-        }
-      }
-    };
-
     res.status(statusCodes.OK).json({
       success: true,
-      data: responseData
+      data: {
+        charts: {
+          byAgeCategory: formatForChart(stats.byAgeCategory),
+          byGender: formatForChart(stats.byGender),
+          byCity: formatForChart(stats.byCity),
+          byBarangay: formatForChart(stats.byBarangay),
+          byPoliceStation: formatForChart(stats.byPoliceStation),
+          byReportType: formatForChart(stats.byReportType),
+          byStatus: formatForChart(stats.byStatus)
+        },
+        summary: {
+          overview: {
+            totalReports: total,
+            trend: trendText
+          },
+          ageCategory: countAndPercent(stats.byAgeCategory, total),
+          gender: genderArr,
+          genderDifferential: genderDiffText,
+          city: countAndPercent(stats.byCity, total),
+          barangay: countAndPercent(stats.byBarangay, total),
+          policeStation: countAndPercent(stats.byPoliceStation, total),
+          topCities,
+          topBarangays,
+          topStations,
+          reportType: typeArr,
+          mostCommonType,
+          status: countAndPercent(stats.byStatus, total),
+          unresolvedPercent,
+          alarmingChildText,
+          crossCategory,
+          summaryParagraph
+        },
+        filters: {
+          appliedFilters: {
+            ageCategory,
+            city,
+            barangay,
+            policeStationId,
+            startDate,
+            endDate,
+            reportType,
+            gender
+          }
+        }
+      }
     });
 
   } catch (error) {

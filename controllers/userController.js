@@ -38,30 +38,36 @@ exports.updateUserDetails = asyncHandler(async (req, res) => {
     return res.status(statusCodes.NOT_FOUND).json({ msg: errorMessages.USER_NOT_FOUND });
   }
 
-  // Handle avatar update
+  // --- Handle avatar update (single or multiple) ---
+  let avatarFile = null;
   if (files.avatar && files.avatar[0]) {
-    // Delete old avatar from Cloudinary
+    avatarFile = files.avatar[0];
+  } else if (req.file && req.file.fieldname === "avatar") {
+    avatarFile = req.file;
+  }
+  if (avatarFile) {
     if (user.avatar.public_id && user.avatar.public_id !== 'default_avatar') {
       await cloudinary.uploader.destroy(user.avatar.public_id);
     }
-
-    // Upload new avatar to Cloudinary
-    const avatarUpload = await uploadToCloudinary(files.avatar[0].path, "avatars");
+    const avatarUpload = await uploadToCloudinary(avatarFile.path, "avatars");
     user.avatar = {
       url: avatarUpload.url,
       public_id: avatarUpload.public_id,
     };
   }
 
-  // Handle ID card update
+  // --- Handle card update (single or multiple) ---
+  let cardFile = null;
   if (files.card && files.card[0]) {
-    // Delete old card from Cloudinary
+    cardFile = files.card[0];
+  } else if (req.file && req.file.fieldname === "card") {
+    cardFile = req.file;
+  }
+  if (cardFile) {
     if (user.card.public_id && user.card.public_id !== 'default_avatar') {
       await cloudinary.uploader.destroy(user.card.public_id);
     }
-
-    // Upload new card to Cloudinary
-    const cardUpload = await uploadToCloudinary(files.card[0].path, "id_cards");
+    const cardUpload = await uploadToCloudinary(cardFile.path, "id_cards");
     user.card = {
       url: cardUpload.url,
       public_id: cardUpload.public_id,

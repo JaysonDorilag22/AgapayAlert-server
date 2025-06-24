@@ -363,6 +363,7 @@ exports.login = asyncHandler(async (req, res) => {
     const token = generateToken(payload, res);
 
     console.log('Logged in successfully:', { email, platform, user: user.deviceToken, token: token });
+    console.log('Res:', res);
 
     res.json({ 
       msg: 'Logged in successfully',
@@ -395,6 +396,8 @@ exports.logout = asyncHandler(async (req, res) => {
     //   });
     // }
 
+    console.log('Clearing cookie...');
+
     // Clear the cookie regardless of user state
     res.clearCookie('token', {
       httpOnly: true,
@@ -402,6 +405,9 @@ exports.logout = asyncHandler(async (req, res) => {
       sameSite: 'Lax',
       path: '/'
     });
+    
+    console.log('status:', res.Authorization);
+    console.log('Cookie cleared.');
 
     res.status(statusCodes.OK).json({ 
       success: true,

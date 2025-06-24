@@ -1139,27 +1139,86 @@ exports.getReports = asyncHandler(async (req, res) => {
       address: req.user.address,
     });
 
-    const { status, type, startDate, endDate, page = 1, limit = 10, query } = req.query;
+    const {
+      status,
+      type: reportType,
+      startDate,
+      endDate,
+      ageCategory,
+      city,
+      barangay,
+      policeStationId,
+      gender,
+      query: searchQuery,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
     const currentPage = parseInt(page);
     const limitPerPage = parseInt(limit);
 
-    console.log("Pagination params:", { currentPage, limitPerPage });
-
-    // Base match stage for the aggregation pipeline
+    // Build dynamic match stage for aggregation
     let matchStage = {};
 
-    // Apply filters regardless of role
     if (status) matchStage.status = status;
-    if (type) matchStage.type = type;
-    if (startDate && endDate) {
-      matchStage.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
+    if (reportType) matchStage.type = reportType;
+    if (startDate || endDate) {
+      matchStage.createdAt = {};
+      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
+      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
+    }
+if (city) {
+  if (city.includes(',')) {
+    matchStage['location.address.city'] = { $in: city.split(',') };
+  } else {
+    matchStage['location.address.city'] = city;
+  }
+  }
+  if (barangay) {
+    if (barangay.includes(',')) {
+      matchStage['location.address.barangay'] = { $in: barangay.split(',') };
+    } else {
+      matchStage['location.address.barangay'] = barangay;
+    }
+  }
+  if (policeStationId) {
+    if (policeStationId.includes(',')) {
+      matchStage.assignedPoliceStation = { $in: policeStationId.split(',') };
+    } else {
+      matchStage.assignedPoliceStation = policeStationId;
+    }
+  }
+    if (gender) {
+      if (gender.includes(',')) {
+        matchStage['personInvolved.gender'] = { $in: gender.split(',') };
+      } else {
+        matchStage['personInvolved.gender'] = gender;
+      }
     }
 
-    if (query && query.trim() !== "") {
-      const searchRegex = new RegExp(query, "i");
+    // Age category filter (on personInvolved.age)
+    if (ageCategory) {
+      const ageRanges = {
+        'infant': { min: 0, max: 2 },
+        'child': { min: 3, max: 12 },
+        'teen': { min: 13, max: 19 },
+        'young_adult': { min: 20, max: 35 },
+        'adult': { min: 36, max: 59 },
+        'senior': { min: 60, max: 150 }
+      };
+      if (ageRanges[ageCategory]) {
+        matchStage['personInvolved.age'] = {
+          $gte: ageRanges[ageCategory].min,
+          $lte: ageRanges[ageCategory].max
+        };
+      }
+    }
+
+    // Text search (caseId, personInvolved.firstName, personInvolved.lastName)
+    if (searchQuery && searchQuery.trim() !== "") {
+      const searchRegex = new RegExp(searchQuery, "i");
       matchStage.$or = [
         { caseId: searchRegex },
         { "personInvolved.firstName": searchRegex },
@@ -1167,22 +1226,36 @@ exports.getReports = asyncHandler(async (req, res) => {
       ];
     }
 
-    console.log("Base match stage:", JSON.stringify(matchStage, null, 2));
+    // Role-based access control
+    const userRoles = req.user.roles;
+    const userRole = userRoles[0];
 
-    // Basic authentication check - only authorized roles can view reports
-    if (
-      !req.user.roles.some((role) => ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role))
-    ) {
-      console.log("❌ Authorization failed - user roles:", req.user.roles);
+    if (!userRoles.some((role) =>
+      ["police_officer", "police_admin", "city_admin", "super_admin"].includes(role)
+    )) {
       return res.status(statusCodes.FORBIDDEN).json({
         success: false,
         msg: "Not authorized to view reports",
       });
     }
 
-    console.log("✅ Authorization passed");
+    // Role-based query restrictions
+    if (userRole === "police_officer" || userRole === "police_admin") {
+      if (!req.user.policeStation) {
+        return res.status(statusCodes.BAD_REQUEST).json({
+          success: false,
+          msg: "Officer/Admin must be assigned to a police station",
+        });
+      }
+      // No additional query restriction, but priority sorting below
+    } else if (userRole === "city_admin") {
+      if (req.user.address?.city) {
+        matchStage['location.address.city'] = req.user.address.city;
+      }
+    }
+    // super_admin: no restriction
 
-    // Aggregation pipeline
+    // Aggregation pipeline for population and sorting
     const pipeline = [
       { $match: matchStage },
       {
@@ -1214,199 +1287,106 @@ exports.getReports = asyncHandler(async (req, res) => {
       { $unwind: { path: "$assignedOfficer", preserveNullAndEmptyArrays: true } },
     ];
 
-    console.log("Base pipeline stages:", pipeline.length);
-
-    // Enhanced role-based sorting with priority system
-    if (req.user.roles.includes("police_officer")) {
-      console.log("🔵 POLICE OFFICER - Adding priority sorting");
-      console.log("Officer ID:", req.user._id);
-      console.log("Officer station:", req.user.policeStation);
-
-      // Police Officers: Priority order
-      // 1. Reports assigned to them personally (highest priority)
-      // 2. Reports from their police station
-      // 3. All other reports
-      const priorityStage = {
+    // Priority sorting logic
+    if (userRole === "police_officer") {
+      pipeline.push({
         $addFields: {
           priority: {
             $cond: [
               { $eq: ["$assignedOfficer._id", req.user._id] },
-              1, // Assigned to them = priority 1
+              1,
               {
                 $cond: [
                   { $eq: ["$assignedPoliceStation._id", req.user.policeStation] },
-                  2, // Their station = priority 2
-                  3, // Other reports = priority 3
+                  2,
+                  3,
                 ],
               },
             ],
           },
         },
-      };
-
-      console.log("Priority stage for officer:", JSON.stringify(priorityStage, null, 2));
-      pipeline.push(priorityStage);
-      pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
-    } else if (req.user.roles.includes("police_admin")) {
-      console.log("🟡 POLICE ADMIN - Adding priority sorting");
-      console.log("Admin station:", req.user.policeStation);
-      console.log("Admin city:", req.user.address?.city);
-
-      // Police Admins: Priority order
-      // 1. Reports from their police station (highest priority)
-      // 2. Reports from their city
-      // 3. All other reports
-      if (req.user.policeStation) {
-        const priorityStage = {
-          $addFields: {
-            priority: {
-              $cond: [
-                { $eq: ["$assignedPoliceStation._id", req.user.policeStation] },
-                1, // Their station = priority 1
-                {
-                  $cond: [
-                    { $eq: ["$assignedPoliceStation.address.city", req.user.address?.city] },
-                    2, // Their city = priority 2
-                    3, // Other reports = priority 3
-                  ],
-                },
-              ],
-            },
+      });
+      pipeline.push({ $sort: { priority: 1, [sortBy]: sortOrder === 'asc' ? 1 : -1 } });
+    } else if (userRole === "police_admin") {
+      pipeline.push({
+        $addFields: {
+          priority: {
+            $cond: [
+              { $eq: ["$assignedPoliceStation._id", req.user.policeStation] },
+              1,
+              {
+                $cond: [
+                  { $eq: ["$assignedPoliceStation.address.city", req.user.address?.city] },
+                  2,
+                  3,
+                ],
+              },
+            ],
           },
-        };
-
-        console.log("Priority stage for admin:", JSON.stringify(priorityStage, null, 2));
-        pipeline.push(priorityStage);
-        pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
-      } else {
-        console.log("⚠️ Police admin has no station assigned - using default sort");
-        pipeline.push({ $sort: { createdAt: -1 } });
-      }
-    } else if (req.user.roles.includes("city_admin")) {
-      console.log("🟢 CITY ADMIN - Adding priority sorting");
-      console.log("City admin city:", req.user.address?.city);
-
-      // City Admins: Priority order
-      // 1. Reports from their city (highest priority)
-      // 2. All other reports
-      if (req.user.address?.city) {
-        const priorityStage = {
-          $addFields: {
-            priority: {
-              $cond: [
-                {
-                  $or: [
-                    { $eq: ["$assignedPoliceStation.address.city", req.user.address.city] },
-                    { $eq: ["$location.address.city", req.user.address.city] },
-                  ],
-                },
-                1, // Their city = priority 1
-                2, // Other reports = priority 2
-              ],
-            },
+        },
+      });
+      pipeline.push({ $sort: { priority: 1, [sortBy]: sortOrder === 'asc' ? 1 : -1 } });
+    } else if (userRole === "city_admin") {
+      pipeline.push({
+        $addFields: {
+          priority: {
+            $cond: [
+              {
+                $or: [
+                  { $eq: ["$assignedPoliceStation.address.city", req.user.address.city] },
+                  { $eq: ["$location.address.city", req.user.address.city] },
+                ],
+              },
+              1,
+              2,
+            ],
           },
-        };
-
-        console.log("Priority stage for city admin:", JSON.stringify(priorityStage, null, 2));
-        pipeline.push(priorityStage);
-        pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
-      } else {
-        console.log("⚠️ City admin has no city assigned - using default sort");
-        pipeline.push({ $sort: { createdAt: -1 } });
-      }
-    } else if (req.user.roles.includes("super_admin")) {
-      console.log("🔴 SUPER ADMIN - Using default sort");
-      // Super Admins: Just sort by date (they can see everything equally)
-      pipeline.push({ $sort: { createdAt: -1 } });
+        },
+      });
+      pipeline.push({ $sort: { priority: 1, [sortBy]: sortOrder === 'asc' ? 1 : -1 } });
     } else {
-      console.log("🟣 REGULAR USER - Adding priority sorting");
-      console.log("User city:", req.user.address?.city);
-
-      // Regular users (if any): Priority order
-      // 1. Reports from their city (if they have an address)
-      // 2. All other reports
-      if (req.user.address?.city) {
-        const priorityStage = {
-          $addFields: {
-            priority: {
-              $cond: [
-                {
-                  $or: [
-                    { $eq: ["$assignedPoliceStation.address.city", req.user.address.city] },
-                    { $eq: ["$location.address.city", req.user.address.city] },
-                  ],
-                },
-                1, // Their city = priority 1
-                2, // Other reports = priority 2
-              ],
-            },
-          },
-        };
-
-        console.log("Priority stage for regular user:", JSON.stringify(priorityStage, null, 2));
-        pipeline.push(priorityStage);
-        pipeline.push({ $sort: { priority: 1, createdAt: -1 } });
-      } else {
-        console.log("⚠️ Regular user has no city - using default sort");
-        pipeline.push({ $sort: { createdAt: -1 } });
-      }
+      // super_admin or fallback: sort by requested field
+      pipeline.push({ $sort: { [sortBy]: sortOrder === 'asc' ? 1 : -1 } });
     }
 
     // Pagination
-    console.log("Adding pagination:", { skip: (currentPage - 1) * limitPerPage, limit: limitPerPage });
     pipeline.push({ $skip: (currentPage - 1) * limitPerPage });
     pipeline.push({ $limit: limitPerPage });
 
-    console.log("Final pipeline length:", pipeline.length);
-    console.log("Complete pipeline:", JSON.stringify(pipeline, null, 2));
-
-    // Execute the aggregation pipeline
-    console.log("🔄 Executing aggregation pipeline...");
+    // Run aggregation
     const reports = await Report.aggregate(pipeline);
-    console.log("✅ Aggregation completed, found reports:", reports.length);
 
     // Get total count for pagination
-    console.log("🔄 Getting total count...");
     const total = await Report.countDocuments(matchStage);
-    console.log("✅ Total reports count:", total);
-
-    // Log first few reports for debugging
-    if (reports.length > 0) {
-      console.log("First report sample:", {
-        id: reports[0]._id,
-        type: reports[0].type,
-        priority: reports[0].priority,
-        assignedStation: reports[0].assignedPoliceStation?.name,
-        assignedOfficer: reports[0].assignedOfficer?.firstName,
-        createdAt: reports[0].createdAt,
-      });
-    }
-
-    const responseData = {
-      reports,
-      currentPage,
-      totalPages: Math.ceil(total / limitPerPage),
-      totalReports: total,
-      hasMore: currentPage * limitPerPage < total,
-    };
-
-    console.log("📊 Response metadata:", {
-      currentPage: responseData.currentPage,
-      totalPages: responseData.totalPages,
-      totalReports: responseData.totalReports,
-      hasMore: responseData.hasMore,
-      reportsInResponse: responseData.reports.length,
-    });
-
-    console.log("=== GET REPORTS RESPONSE SENT ===");
 
     res.status(statusCodes.OK).json({
       success: true,
-      data: responseData,
+      data: {
+        reports,
+        currentPage,
+        totalPages: Math.ceil(total / limitPerPage),
+        totalReports: total,
+        hasMore: currentPage * limitPerPage < total,
+        filters: {
+          applied: {
+            status,
+            reportType,
+            startDate,
+            endDate,
+            ageCategory,
+            city,
+            barangay,
+            policeStationId,
+            gender,
+            searchQuery
+          },
+          sortBy,
+          sortOrder
+        }
+      }
     });
   } catch (error) {
     console.error("❌ ERROR in getReports:", error);
-    console.error("Error stack:", error.stack);
     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
       success: false,
       msg: "Error retrieving reports",

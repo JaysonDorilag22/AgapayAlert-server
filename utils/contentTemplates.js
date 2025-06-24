@@ -1,4 +1,5 @@
 // Broadcast notification templates
+
 const broadcastTemplates = {
   report: (report) => ({
     title: `${report.type} Alert`,
