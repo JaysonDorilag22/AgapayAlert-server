@@ -585,7 +585,7 @@ async function handlePhotoInput(psid, message, session) {
       
       // Ask for ID verification
       await sendResponse(psid, {
-        text: "Please provide yout valid ID or any credentials for verification (ID type and ID number):"
+        text: "Please provide your valid ID or any credentials for verification (ID type and ID number):"
       });
     } else {
       await sendResponse(psid, { 
