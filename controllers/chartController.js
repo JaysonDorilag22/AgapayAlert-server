@@ -86,7 +86,7 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
     const reports = await Report.find(query)
       .populate('reporter', 'age address gender')
       .populate('assignedPoliceStation', 'name address')
-      .select('personInvolved location type status createdAt')
+      .select('personInvolved location type status createdAt updatedAt reporter assignedPoliceStation')
       .lean();
 
     const total = reports.length;
@@ -117,7 +117,26 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
       ageByBarangay: {},
       typeByBarangay: {},
       unresolvedByCity: {},
-      childrenByBarangay: {}
+      childrenByBarangay: {},
+      repeatReporters: {},
+      repeatAreas: {},
+      longPendingCases: [],
+      monthlyTrends: {},
+      resolutionTimes: []
+    };
+
+    // Helper for monthly trend
+    const getMonthKey = (date) => {
+      const d = new Date(date);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    };
+
+    // Helper for resolution time
+    const getResolutionTime = (report) => {
+      if (report.status === 'Resolved' && report.createdAt && report.updatedAt) {
+        return (new Date(report.updatedAt) - new Date(report.createdAt)) / 3600000; // hours
+      }
+      return null;
     };
 
     // Process each report to build statistics
@@ -177,6 +196,36 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
       if (barangay && ageCat === "Child (3-12)") {
         crossCategory.childrenByBarangay[barangay] = (crossCategory.childrenByBarangay[barangay] || 0) + 1;
       }
+      // Repeat reporters
+      if (report.reporter && report.reporter._id) {
+        const reporterId = report.reporter._id.toString();
+        crossCategory.repeatReporters[reporterId] = (crossCategory.repeatReporters[reporterId] || 0) + 1;
+      }
+      // Repeat areas (city+barangay)
+      if (city && barangay) {
+        const areaKey = `${city}|${barangay}`;
+        crossCategory.repeatAreas[areaKey] = (crossCategory.repeatAreas[areaKey] || 0) + 1;
+      }
+      // Long pending cases
+      if (status !== 'Resolved' && report.createdAt) {
+        const daysPending = (Date.now() - new Date(report.createdAt)) / (1000 * 60 * 60 * 24);
+        if (daysPending > 30) {
+          crossCategory.longPendingCases.push({
+            id: report._id,
+            city,
+            barangay,
+            daysPending: Math.round(daysPending),
+            type: reportType,
+            status
+          });
+        }
+      }
+      // Monthly trends
+      const monthKey = getMonthKey(report.createdAt);
+      crossCategory.monthlyTrends[monthKey] = (crossCategory.monthlyTrends[monthKey] || 0) + 1;
+      // Resolution times
+      const resTime = getResolutionTime(report);
+      if (resTime !== null) crossCategory.resolutionTimes.push(resTime);
     });
 
     // Chart data
@@ -240,6 +289,59 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
     // Cross-category: most reports involving children are from which barangay
     const mostChildBarangay = maxChildBarangay ? maxChildBarangay[0] : null;
 
+    // Monthly trend analytics
+    const monthlyTrendArr = Object.entries(crossCategory.monthlyTrends)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([month, count]) => ({ month, count }));
+    let trendDirection = '';
+    if (monthlyTrendArr.length > 1) {
+      const first = monthlyTrendArr[0].count;
+      const last = monthlyTrendArr[monthlyTrendArr.length - 1].count;
+      if (last > first) trendDirection = 'increasing';
+      else if (last < first) trendDirection = 'decreasing';
+      else trendDirection = 'stable';
+    }
+    // Detect spikes
+    let spikeText = '';
+    if (monthlyTrendArr.length > 2) {
+      for (let i = 1; i < monthlyTrendArr.length - 1; i++) {
+        if (monthlyTrendArr[i].count > monthlyTrendArr[i - 1].count * 1.5 && monthlyTrendArr[i].count > monthlyTrendArr[i + 1].count * 1.5) {
+          spikeText = `Spike detected in ${monthlyTrendArr[i].month} with ${monthlyTrendArr[i].count} reports.`;
+          break;
+        }
+      }
+    }
+
+    // Average and fastest resolution time
+    const avgResolutionTime = crossCategory.resolutionTimes.length
+      ? (crossCategory.resolutionTimes.reduce((a, b) => a + b, 0) / crossCategory.resolutionTimes.length).toFixed(1)
+      : null;
+    const fastestResolutionTime = crossCategory.resolutionTimes.length
+      ? Math.min(...crossCategory.resolutionTimes).toFixed(1)
+      : null;
+
+    // Long pending cases (top 3)
+    const longPendingCases = crossCategory.longPendingCases
+      .sort((a, b) => b.daysPending - a.daysPending)
+      .slice(0, 3);
+
+    // Repeat reporters (top 3)
+    const repeatReportersArr = Object.entries(crossCategory.repeatReporters)
+      .filter(([_, count]) => count > 1)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([reporterId, count]) => ({ reporterId, count }));
+
+    // Repeat areas (top 3)
+    const repeatAreasArr = Object.entries(crossCategory.repeatAreas)
+      .filter(([_, count]) => count > 1)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([area, count]) => {
+        const [city, barangay] = area.split('|');
+        return { city, barangay, count };
+      });
+
     // Compose summary paragraph
     const summaryParagraph = `
       In this reporting period, a total of ${total} cases were recorded. 
@@ -249,6 +351,13 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
       Notably, ${unresolvedPercent}% of all cases remain unresolved, with ${mostCommonType ? mostCommonType.label : "N/A"} reports being the most common type.
       ${trendText}
       ${alarmingChildText ? alarmingChildText : ""}
+      ${spikeText}
+      ${trendDirection ? `The overall trend is ${trendDirection}.` : ""}
+      ${avgResolutionTime ? `Average resolution time is ${avgResolutionTime} hours.` : ""}
+      ${fastestResolutionTime ? `Fastest resolution was ${fastestResolutionTime} hours.` : ""}
+      ${longPendingCases.length ? `There are ${longPendingCases.length} long-pending cases (over 30 days).` : ""}
+      ${repeatReportersArr.length ? `There are repeat reporters, with the top reporter submitting ${repeatReportersArr[0].count} reports.` : ""}
+      ${repeatAreasArr.length ? `Repeat incident areas include ${repeatAreasArr.map(a => `${a.barangay}, ${a.city}`).join('; ')}.` : ""}
       These trends suggest a need for targeted interventions in high-report areas and among vulnerable age groups.
     `.replace(/\s+/g, " ").trim();
 
@@ -263,12 +372,20 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
           byBarangay: formatForChart(stats.byBarangay),
           byPoliceStation: formatForChart(stats.byPoliceStation),
           byReportType: formatForChart(stats.byReportType),
-          byStatus: formatForChart(stats.byStatus)
+          byStatus: formatForChart(stats.byStatus),
+          monthlyTrend: {
+            labels: monthlyTrendArr.map(m => m.month),
+            values: monthlyTrendArr.map(m => m.count)
+          }
         },
         summary: {
           overview: {
             totalReports: total,
-            trend: trendText
+            trend: trendText,
+            trendDirection,
+            spikeText,
+            avgResolutionTime,
+            fastestResolutionTime
           },
           ageCategory: countAndPercent(stats.byAgeCategory, total),
           gender: genderArr,
@@ -284,7 +401,12 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
           status: countAndPercent(stats.byStatus, total),
           unresolvedPercent,
           alarmingChildText,
-          crossCategory,
+          crossCategory: {
+            ...crossCategory,
+            longPendingCases,
+            repeatReportersArr,
+            repeatAreasArr
+          },
           summaryParagraph
         },
         filters: {
