@@ -263,6 +263,39 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
       values: Object.values(obj)
     });
 
+    // --- SCATTER PLOT: Age Category vs. Resolution Time ---
+    // Map age categories to numeric values for X-axis
+    const ageCategoryMap = {
+      'Infant (0-2)': 1,
+      'Child (3-12)': 2,
+      'Teen (13-19)': 3,
+      'Young Adult (20-35)': 4,
+      'Adult (36-59)': 5,
+      'Senior (60+)': 6
+    };
+    // Collect scatter data points: { x: ageCategoryNum, y: resolutionTime, label: ageCategory }
+    const scatterData = [];
+    reports.forEach(report => {
+      const age = report.personInvolved.age || 0;
+      let ageCat;
+      if (age <= 2) ageCat = 'Infant (0-2)';
+      else if (age <= 12) ageCat = 'Child (3-12)';
+      else if (age <= 19) ageCat = 'Teen (13-19)';
+      else if (age <= 35) ageCat = 'Young Adult (20-35)';
+      else if (age <= 59) ageCat = 'Adult (36-59)';
+      else ageCat = 'Senior (60+)';
+      const resTime = getResolutionTime(report);
+      if (resTime !== null && ageCategoryMap[ageCat]) {
+        scatterData.push({
+          x: ageCategoryMap[ageCat],
+          y: parseFloat(resTime),
+          label: ageCat
+        });
+      }
+    });
+    // For chart.js, you may want to group by age category and show all points, or average per category
+    // Here, we provide all points for a true scatter plot
+
     // Top locations
     const topN = (obj, n = 3) => Object.entries(obj)
       .sort((a, b) => b[1] - a[1])
@@ -405,6 +438,24 @@ exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
           monthlyTrend: {
             labels: monthlyTrendArr.map(m => m.month),
             values: monthlyTrendArr.map(m => m.count)
+          },
+          ageCategoryVsResolutionTimeScatter: {
+            // For chart.js scatter: datasets: [{ label, data: [{x, y, label}] }]
+            labels: Object.keys(ageCategoryMap),
+            datasets: [
+              {
+                label: 'Age Category vs. Resolution Time (hours)',
+                data: scatterData,
+                backgroundColor: '#36A2EB'
+              }
+            ],
+            xAxis: {
+              label: 'Age Category (1=Infant, 2=Child, 3=Teen, 4=Young Adult, 5=Adult, 6=Senior)',
+              categories: ageCategoryMap
+            },
+            yAxis: {
+              label: 'Resolution Time (hours)'
+            }
           }
         },
         summary: {
@@ -480,6 +531,7 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
       city,
       barangay,
       policeStationId,
+      policeStationName,
       startDate,
       endDate,
       reportType,
@@ -503,12 +555,17 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
     // City filter
     if (city) officerQuery['address.city'] = city;
     if (barangay) officerQuery['address.barangay'] = barangay;
-    if (policeStationId) officerQuery.policeStation = policeStationId;
+    
+    // Enhanced police station filtering
+    if (policeStationId) {
+      officerQuery.policeStation = policeStationId;
+    }
+    
     if (gender) officerQuery.gender = gender;
 
     // Get all officers matching filters
     const officers = await User.find(officerQuery)
-      .select('_id firstName lastName rank policeStation address')
+      .select('_id firstName lastName rank policeStation address avatar profilePicture')
       .populate('policeStation', 'name address')
       .lean();
 
@@ -519,9 +576,26 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
       });
     }
 
+    // Additional filtering by police station name if provided
+    let filteredOfficers = officers;
+    if (policeStationName) {
+      filteredOfficers = officers.filter(officer => 
+        officer.policeStation && 
+        officer.policeStation.name && 
+        officer.policeStation.name.toLowerCase().includes(policeStationName.toLowerCase())
+      );
+      
+      if (!filteredOfficers.length) {
+        return res.status(statusCodes.OK).json({
+          success: true,
+          data: []
+        });
+      }
+    }
+
     // Build report query for stats
     let reportQuery = {
-      assignedOfficer: { $in: officers.map(o => o._id) }
+      assignedOfficer: { $in: filteredOfficers.map(o => o._id) }
     };
 
     // Report filters
@@ -555,7 +629,7 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
     // Gender filter (on personInvolved.gender)
     if (gender) reportQuery['personInvolved.gender'] = gender;
 
-    // Aggregate stats per officer
+    // Enhanced aggregate stats per officer with resolution times and trends
     const stats = await Report.aggregate([
       { $match: reportQuery },
       {
@@ -567,15 +641,37 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
           transferred: { $sum: { $cond: [{ $eq: ['$status', 'Transferred'] }, 1, 0] } },
           pending: { $sum: { $cond: [{ $eq: ['$status', 'Pending'] }, 1, 0] } },
           byType: {
-            $push: { type: '$type', status: '$status' }
+            $push: { type: '$type', status: '$status', createdAt: '$createdAt', updatedAt: '$updatedAt' }
+          },
+          // Resolution times for resolved cases
+          resolutionTimes: {
+            $push: {
+              $cond: [
+                { $eq: ['$status', 'Resolved'] },
+                {
+                  $divide: [
+                    { $subtract: ['$updatedAt', '$createdAt'] },
+                    3600000 // Convert to hours
+                  ]
+                },
+                null
+              ]
+            }
+          },
+          // Monthly distribution for trend analysis
+          monthlyDistribution: {
+            $push: {
+              month: { $dateToString: { format: "%Y-%m", date: '$createdAt' } },
+              status: '$status'
+            }
           }
         }
       }
     ]);
 
-    // Map stats to officers
+    // Enhanced officer mapping with performance metrics
     const officerMap = {};
-    officers.forEach(officer => {
+    filteredOfficers.forEach(officer => {
       officerMap[officer._id.toString()] = {
         ...officer,
         totalAssigned: 0,
@@ -584,10 +680,19 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
         transferred: 0,
         pending: 0,
         resolutionRate: 0,
+        avgResolutionTime: 0,
+        fastestResolutionTime: 0,
+        workloadEfficiency: 0,
+        specialization: {},
+        monthlyTrend: {},
+        performanceScore: 0,
         byType: {}
       };
     });
 
+    // Calculate department averages for comparison
+    let totalDeptAssigned = 0, totalDeptResolved = 0, allResolutionTimes = [];
+    
     stats.forEach(stat => {
       const o = officerMap[stat._id.toString()];
       if (o) {
@@ -598,25 +703,98 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
         o.pending = stat.pending;
         o.resolutionRate = stat.totalAssigned ? Math.round((stat.resolved / stat.totalAssigned) * 100) : 0;
 
-        // By type breakdown
+        // Calculate resolution time metrics
+        const validResolutionTimes = stat.resolutionTimes.filter(time => time !== null && time > 0);
+        if (validResolutionTimes.length > 0) {
+          o.avgResolutionTime = parseFloat((validResolutionTimes.reduce((a, b) => a + b, 0) / validResolutionTimes.length).toFixed(1));
+          o.fastestResolutionTime = parseFloat(Math.min(...validResolutionTimes).toFixed(1));
+          allResolutionTimes.push(...validResolutionTimes);
+        }
+
+        // Calculate workload efficiency (resolved per day)
+        const daysSinceFirstCase = stat.monthlyDistribution.length > 0 ? 
+          Math.max(1, (Date.now() - new Date(Math.min(...stat.monthlyDistribution.map(m => new Date(m.month))))) / (1000 * 60 * 60 * 24)) : 1;
+        o.workloadEfficiency = parseFloat((stat.resolved / daysSinceFirstCase * 30).toFixed(2)); // Cases per month
+
+        // By type breakdown with specialization scoring
+        const typeBreakdown = {};
         stat.byType.forEach(item => {
-          if (!o.byType[item.type]) o.byType[item.type] = { assigned: 0, resolved: 0 };
-          o.byType[item.type].assigned += 1;
-          if (item.status === 'Resolved') o.byType[item.type].resolved += 1;
+          if (!typeBreakdown[item.type]) typeBreakdown[item.type] = { assigned: 0, resolved: 0 };
+          typeBreakdown[item.type].assigned += 1;
+          if (item.status === 'Resolved') typeBreakdown[item.type].resolved += 1;
         });
+        
+        o.byType = typeBreakdown;
+        
+        // Calculate specialization (type with highest resolution rate)
+        let bestType = null, bestRate = 0;
+        Object.entries(typeBreakdown).forEach(([type, data]) => {
+          const rate = data.assigned > 0 ? (data.resolved / data.assigned) * 100 : 0;
+          if (rate > bestRate && data.assigned >= 2) { // At least 2 cases to be considered
+            bestRate = rate;
+            bestType = type;
+          }
+        });
+        o.specialization = { type: bestType, rate: Math.round(bestRate) };
+
+        // Monthly trend analysis
+        const monthlyStats = {};
+        stat.monthlyDistribution.forEach(item => {
+          if (!monthlyStats[item.month]) monthlyStats[item.month] = { total: 0, resolved: 0 };
+          monthlyStats[item.month].total += 1;
+          if (item.status === 'Resolved') monthlyStats[item.month].resolved += 1;
+        });
+        o.monthlyTrend = monthlyStats;
+
+        // Performance score (weighted combination of metrics)
+        const resolutionWeight = 0.4;
+        const efficiencyWeight = 0.3;
+        const timeWeight = 0.3;
+        
+        const resolutionScore = o.resolutionRate;
+        const efficiencyScore = Math.min(100, o.workloadEfficiency * 10); // Scale to 0-100
+        const timeScore = o.avgResolutionTime > 0 ? Math.max(0, 100 - (o.avgResolutionTime / 24) * 20) : 50; // Lower time = higher score
+        
+        o.performanceScore = Math.round(
+          (resolutionScore * resolutionWeight) + 
+          (efficiencyScore * efficiencyWeight) + 
+          (timeScore * timeWeight)
+        );
+
+        // Add to department totals
+        totalDeptAssigned += stat.totalAssigned;
+        totalDeptResolved += stat.resolved;
       }
     });
 
-        // Get sortBy and sortOrder from query, with defaults
-    const { sortBy = 'totalAssigned', sortOrder = 'desc' } = req.query;
+    // Calculate department averages
+    const deptAvgResolutionRate = totalDeptAssigned > 0 ? Math.round((totalDeptResolved / totalDeptAssigned) * 100) : 0;
+    const deptAvgResolutionTime = allResolutionTimes.length > 0 ? 
+      parseFloat((allResolutionTimes.reduce((a, b) => a + b, 0) / allResolutionTimes.length).toFixed(1)) : 0;
 
-    // Allowed sort fields
+    // Add percentile rankings
+    const allOfficers = Object.values(officerMap);
+    allOfficers.forEach(officer => {
+      // Percentile for resolution rate
+      const betterResolution = allOfficers.filter(o => o.resolutionRate < officer.resolutionRate).length;
+      officer.resolutionPercentile = Math.round((betterResolution / allOfficers.length) * 100);
+      
+      // Percentile for performance score
+      const betterPerformance = allOfficers.filter(o => o.performanceScore < officer.performanceScore).length;
+      officer.performancePercentile = Math.round((betterPerformance / allOfficers.length) * 100);
+    });
+
+        // Get sortBy and sortOrder from query, with defaults
+    const { sortBy = 'performanceScore', sortOrder = 'desc' } = req.query;
+
+    // Enhanced sort fields
     const allowedSortFields = [
-      'totalAssigned', 'resolved', 'underInvestigation', 'transferred', 'pending', 'resolutionRate'
+      'totalAssigned', 'resolved', 'underInvestigation', 'transferred', 'pending', 
+      'resolutionRate', 'avgResolutionTime', 'workloadEfficiency', 'performanceScore'
     ];
 
     // Validate sortBy
-    const sortField = allowedSortFields.includes(sortBy) ? sortBy : 'totalAssigned';
+    const sortField = allowedSortFields.includes(sortBy) ? sortBy : 'performanceScore';
 
     // Sort officers dynamically
     const ranked = Object.values(officerMap).sort((a, b) => {
@@ -627,11 +805,156 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
       }
     });
 
+    // Prepare chart data for frontend visualization
+    const chartData = {
+      // Bar chart: Officer performance comparison
+      performanceBarChart: {
+        labels: ranked.slice(0, 10).map(o => `${o.firstName} ${o.lastName}`),
+        datasets: [
+          {
+            label: 'Performance Score',
+            data: ranked.slice(0, 10).map(o => o.performanceScore),
+            backgroundColor: '#36A2EB'
+          },
+          {
+            label: 'Resolution Rate (%)',
+            data: ranked.slice(0, 10).map(o => o.resolutionRate),
+            backgroundColor: '#4BC0C0'
+          }
+        ],
+        // Include officer details for tooltips/avatars
+        officerDetails: ranked.slice(0, 10).map(o => ({
+          name: `${o.firstName} ${o.lastName}`,
+          avatar: o.avatar.url || o.profilePicture || null,
+          rank: o.rank,
+          station: o.policeStation?.name || 'N/A'
+        }))
+      },
+
+      // Radar chart: Multi-metric officer comparison (top 5)
+      officerRadarChart: {
+        labels: ['Resolution Rate', 'Avg Resolution Time (inv)', 'Workload Efficiency', 'Cases Resolved', 'Specialization Rate'],
+        datasets: ranked.slice(0, 5).map((officer, index) => ({
+          label: `${officer.firstName} ${officer.lastName}`,
+          data: [
+            officer.resolutionRate,
+            officer.avgResolutionTime > 0 ? Math.max(0, 100 - (officer.avgResolutionTime / 24) * 20) : 50, // Inverted for better visualization
+            Math.min(100, officer.workloadEfficiency * 10),
+            Math.min(100, (officer.resolved / Math.max(...ranked.map(r => r.resolved))) * 100),
+            officer.specialization.rate || 0
+          ],
+          backgroundColor: `rgba(${54 + index * 50}, ${162 + index * 30}, ${235 - index * 40}, 0.2)`,
+          borderColor: `rgba(${54 + index * 50}, ${162 + index * 30}, ${235 - index * 40}, 1)`,
+          // Include officer details
+          officerInfo: {
+            name: `${officer.firstName} ${officer.lastName}`,
+            avatar: officer.avatar.url || officer.profilePicture || null,
+            rank: officer.rank,
+            station: officer.policeStation?.name || 'N/A'
+          }
+        }))
+      },
+
+      // Scatter plot: Resolution Rate vs Workload
+      resolutionVsWorkloadScatter: {
+        datasets: [{
+          label: 'Officers',
+          data: ranked.map(officer => ({
+            x: officer.workloadEfficiency,
+            y: officer.resolutionRate,
+            label: `${officer.firstName} ${officer.lastName}`,
+            rank: officer.rank,
+            station: officer.policeStation?.name || 'N/A',
+            avatar: officer.avatar.url || officer.profilePicture || null,
+            id: officer._id
+          })),
+          backgroundColor: '#FF6384'
+        }],
+        xAxis: { label: 'Workload Efficiency (cases/month)' },
+        yAxis: { label: 'Resolution Rate (%)' }
+      },
+
+      // Heatmap data: Officer performance by case type
+      caseTypeHeatmap: {
+        officers: ranked.slice(0, 15).map(o => ({
+          name: `${o.firstName} ${o.lastName}`,
+          avatar: o.avatar || o.profilePicture || null,
+          rank: o.rank
+        })),
+        caseTypes: [...new Set(ranked.flatMap(o => Object.keys(o.byType)))],
+        data: ranked.slice(0, 15).map(officer => 
+          [...new Set(ranked.flatMap(o => Object.keys(o.byType)))].map(caseType => {
+            const typeData = officer.byType[caseType];
+            return typeData ? Math.round((typeData.resolved / typeData.assigned) * 100) : 0;
+          })
+        )
+      },
+
+      // Trend lines: Monthly performance trends (top 5 officers)
+      monthlyTrendChart: {
+        labels: [...new Set(ranked.flatMap(o => Object.keys(o.monthlyTrend)))].sort(),
+        datasets: ranked.slice(0, 5).map((officer, index) => ({
+          label: `${officer.firstName} ${officer.lastName}`,
+          data: [...new Set(ranked.flatMap(o => Object.keys(o.monthlyTrend)))].sort().map(month => {
+            const monthData = officer.monthlyTrend[month];
+            return monthData ? Math.round((monthData.resolved / monthData.total) * 100) : 0;
+          }),
+          borderColor: `rgba(${54 + index * 50}, ${162 + index * 30}, ${235 - index * 40}, 1)`,
+          fill: false,
+          // Include officer details
+          officerInfo: {
+            name: `${officer.firstName} ${officer.lastName}`,
+            avatar: officer.avatar.url || officer.profilePicture || null,
+            rank: officer.rank,
+            station: officer.policeStation?.name || 'N/A'
+          }
+        }))
+      }
+    };
+
+    // Department analytics summary
+    const departmentSummary = {
+      totalOfficers: ranked.length,
+      avgResolutionRate: deptAvgResolutionRate,
+      avgResolutionTime: deptAvgResolutionTime,
+      topPerformer: ranked[0] ? {
+        name: `${ranked[0].firstName} ${ranked[0].lastName}`,
+        score: ranked[0].performanceScore,
+        resolutionRate: ranked[0].resolutionRate
+      } : null,
+      performanceDistribution: {
+        excellent: ranked.filter(o => o.performanceScore >= 90).length,
+        good: ranked.filter(o => o.performanceScore >= 70 && o.performanceScore < 90).length,
+        average: ranked.filter(o => o.performanceScore >= 50 && o.performanceScore < 70).length,
+        needsImprovement: ranked.filter(o => o.performanceScore < 50).length
+      },
+      specializationBreakdown: Object.entries(
+        ranked.reduce((acc, officer) => {
+          if (officer.specialization.type) {
+            acc[officer.specialization.type] = (acc[officer.specialization.type] || 0) + 1;
+          }
+          return acc;
+        }, {})
+      ).map(([type, count]) => ({ type, count }))
+    };
+
     res.status(statusCodes.OK).json({
       success: true,
-      data: ranked,
+      data: {
+        officers: ranked,
+        charts: chartData,
+        departmentSummary,
+        metadata: {
+          totalOfficers: ranked.length,
+          dataGeneratedAt: new Date().toISOString(),
+          performanceMetrics: [
+            'resolutionRate', 'avgResolutionTime', 'workloadEfficiency', 
+            'performanceScore', 'specialization'
+          ]
+        }
+      },
       filters: {
-        applied: { ageCategory, city, barangay, policeStationId, startDate, endDate, reportType, gender },
+        applied: { ageCategory, city, barangay, policeStationId, policeStationName, startDate, endDate, reportType, gender },
         sortBy,
         sortOrder
       }
@@ -1106,5 +1429,21 @@ exports.getLocationHotspots = asyncHandler(async (req, res) => {
     });
   }
 });
+
+// Enhanced Police Station Filtering Documentation
+// The function now supports multiple police station filtering options:
+// 
+// 1. policeStationId - Filter by exact police station ObjectId
+//    Example: GET /api/v1/charts/officer-rankings?policeStationId=67618c86c93d34d5109ce96f
+//
+// 2. policeStationName - Filter by police station name (partial match, case-insensitive)
+//    Example: GET /api/v1/charts/officer-rankings?policeStationName=Taguig
+//    Example: GET /api/v1/charts/officer-rankings?policeStationName=Tenement
+//
+// 3. city - Filter officers by their assigned city (affects both officer location and police station location)
+//    Example: GET /api/v1/charts/officer-rankings?city=Taguig
+//
+// 4. Combined filters for precise targeting:
+//    Example: GET /api/v1/charts/officer-rankings?city=Taguig&policeStationName=Tenement&startDate=2024-01-01
 
 module.exports = exports;

@@ -20,5 +20,6 @@ router.get('/location-hotspots', chartController.getLocationHotspots);
 router.get('/basic-analytics', chartController.getBasicAnalytics);
 router.get('/demographics', chartController.getUserDemographicsAnalysis);
 router.get('/officer-rankings', chartController.getOfficerRankings);
+router.get('/officer-analytics', chartController.getOfficerRankings); // Alias for enhanced analytics
 
 module.exports = router;
