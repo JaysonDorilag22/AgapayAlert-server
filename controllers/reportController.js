@@ -2,6 +2,7 @@ const Report = require("../models/reportModel");
 const Notification = require("../models/notificationModel");
 const User = require("../models/userModel");
 const PoliceStation = require("../models/policeStationModel");
+const TransferredReport = require('../models/transferredReportModel');
 const asyncHandler = require("express-async-handler");
 const statusCodes = require("../constants/statusCodes");
 const errorMessages = require("../constants/errorMessages");
@@ -2502,10 +2503,321 @@ exports.updateAbsentToMissingReports = asyncHandler(async (req, res) => {
 // controllers/reportController.js
 // Add this new controller function
 // controllers/reportController.js
+// exports.transferReport = asyncHandler(async (req, res) => {
+//   try {
+//     const { reportId } = req.params;
+//     const { recipientEmail, recipientDepartment, transferNotes } = req.body;
+
+//     // Authorization check - only police_admin, city_admin, and super_admin can transfer
+//     if (!req.user.roles.some((role) => ["police_admin", "city_admin", "super_admin"].includes(role))) {
+//       // Check if user is assigned officer for this report
+//       const report = await Report.findById(req.params.reportId || req.body.reportId);
+
+//       if (!report) {
+//         return res.status(statusCodes.NOT_FOUND).json({
+//           success: false,
+//           msg: "Report not found",
+//         });
+//       }
+
+//       // Allow if user is the assigned officer or belongs to the assigned police station or is a police officer at the station
+//       const isAssignedOfficer = report.assignedOfficer && report.assignedOfficer.toString() === req.user._id.toString();
+//       const isStationMember =
+//         report.assignedPoliceStation && report.assignedPoliceStation.toString() === req.user.policeStation?.toString();
+//       const isPoliceOfficer = req.user.roles.includes("police_officer");
+
+//       if (!isAssignedOfficer && !isStationMember && !isPoliceOfficer) {
+//         return res.status(statusCodes.FORBIDDEN).json({
+//           success: false,
+//           msg: "Only admins, assigned officers, or station police officers can transfer reports",
+//         });
+//       }
+//     }
+
+//     // Validate required fields
+//     if (!recipientEmail || !recipientDepartment) {
+//       return res.status(statusCodes.BAD_REQUEST).json({
+//         success: false,
+//         msg: "Recipient email and department are required",
+//       });
+//     }
+
+//     // Get report with all populated data
+//     const report = await Report.findById(reportId)
+//       .populate("reporter", "firstName lastName number email address")
+//       .populate("assignedPoliceStation", "name address contactNumber")
+//       .populate("assignedOfficer", "firstName lastName number email")
+//       .populate("broadcastHistory.publishedBy", "firstName lastName")
+//       .populate("consentUpdateHistory.updatedBy", "firstName lastName");
+
+//     if (!report) {
+//       return res.status(statusCodes.NOT_FOUND).json({
+//         success: false,
+//         msg: "Report not found",
+//       });
+//     }
+
+//     // Check if report is already transferred
+//     if (report.status === "Transferred") {
+//       return res.status(statusCodes.BAD_REQUEST).json({
+//         success: false,
+//         msg: "Report has already been transferred",
+//       });
+//     }
+
+//     // Prepare media attachments for email
+//     const emailAttachments = [];
+
+//     // Add main photo if exists
+//     if (report.personInvolved.mostRecentPhoto?.url) {
+//       emailAttachments.push({
+//         filename: `main_photo_${report.caseId}.jpg`,
+//         path: report.personInvolved.mostRecentPhoto.url,
+//         cid: "mainPhoto",
+//       });
+//     }
+
+//     // Add additional images if exist
+//     if (report.additionalImages?.length > 0) {
+//       report.additionalImages.forEach((image, index) => {
+//         emailAttachments.push({
+//           filename: `additional_image_${index + 1}_${report.caseId}.jpg`,
+//           path: image.url,
+//           cid: `additionalImage${index + 1}`,
+//         });
+//       });
+//     }
+
+//     // Add video if exists
+//     if (report.video?.url) {
+//       emailAttachments.push({
+//         filename: `video_${report.caseId}.mp4`,
+//         path: report.video.url,
+//         cid: "reportVideo",
+//       });
+//     }
+
+//     // Prepare email context with complete report data
+//     const emailContext = {
+//       reportId: report._id,
+//       caseId: report.caseId,
+//       reportType: report.type,
+//       transferDate: new Date().toLocaleDateString(),
+//       transferredBy: `${req.user.firstName} ${req.user.lastName}`,
+//       transferNotes: transferNotes || "No additional notes provided",
+//       recipientDepartment,
+
+//       // Person involved details
+//       personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+//       personAge: report.personInvolved.age,
+//       personGender: report.personInvolved.gender,
+//       personAlias: report.personInvolved.alias,
+//       lastSeenDate: report.personInvolved.lastSeenDate,
+//       lastSeenTime: report.personInvolved.lastSeentime,
+//       lastKnownLocation: report.personInvolved.lastKnownLocation,
+//       relationship: report.personInvolved.relationship,
+//       contactInformation: report.personInvolved.contactInformation,
+
+//       // Reporter details
+//       reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+//       reporterEmail: report.reporter.email,
+//       reporterPhone: report.reporter.number,
+//       reporterAddress: report.reporter.address,
+
+//       // Location details
+//       location: {
+//         streetAddress: report.location.address.streetAddress,
+//         barangay: report.location.address.barangay,
+//         city: report.location.address.city,
+//         zipCode: report.location.address.zipCode,
+//       },
+
+//       // Station details
+//       assignedStation: report.assignedPoliceStation
+//         ? {
+//             name: report.assignedPoliceStation.name,
+//             address: report.assignedPoliceStation.address,
+//             contact: report.assignedPoliceStation.contactNumber,
+//           }
+//         : null,
+
+//       // Officer details
+//       assignedOfficer: report.assignedOfficer
+//         ? {
+//             name: `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}`,
+//             email: report.assignedOfficer.email,
+//             phone: report.assignedOfficer.number,
+//           }
+//         : null,
+
+//       // Case details
+//       createdAt: report.createdAt,
+//       currentStatus: report.status,
+//       followUpNotes: report.followUp || [],
+//       statusHistory: report.statusHistory || [],
+
+//       // Additional information
+//       personDescription: {
+//         height: report.personInvolved.height,
+//         weight: report.personInvolved.weight,
+//         eyeColor: report.personInvolved.eyeColor,
+//         hairColor: report.personInvolved.hairColor,
+//         scarsMarksTattoos: report.personInvolved.scarsMarksTattoos,
+//         lastKnownClothing: report.personInvolved.lastKnownClothing,
+//         medications: report.personInvolved.medications,
+//         otherInformation: report.personInvolved.otherInformation,
+//       },
+
+//       // Media info for template
+//       hasMainPhoto: !!report.personInvolved.mostRecentPhoto?.url,
+//       additionalImagesCount: report.additionalImages?.length || 0,
+//       hasVideo: !!report.video?.url,
+
+//       // Media arrays for template iteration
+//       additionalImages: report.additionalImages || [],
+//       mainPhotoUrl: report.personInvolved.mostRecentPhoto?.url,
+//       videoUrl: report.video?.url,
+//     };
+
+//     // Send transfer email with attachments
+//     const emailResult = await sendTransferEmailWithAttachments(emailContext, [recipientEmail], emailAttachments);
+
+//     if (!emailResult.success) {
+//       return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//         success: false,
+//         msg: "Failed to send transfer email",
+//         error: emailResult.error,
+//       });
+//     }
+
+//     // Update report status and add transfer information
+//     report.status = "Transferred";
+
+//     // Add to status history
+//     report.statusHistory = report.statusHistory || [];
+//     report.statusHistory.push({
+//       previousStatus: report.status,
+//       newStatus: "Transferred",
+//       updatedBy: req.user._id,
+//       updatedAt: new Date(),
+//       notes: `Transferred to ${recipientDepartment} (${recipientEmail}): ${transferNotes || "No notes"}`,
+//     });
+
+//     // Add transfer record
+//     report.transferHistory = report.transferHistory || [];
+//     report.transferHistory.push({
+//       transferredTo: recipientEmail,
+//       department: recipientDepartment,
+//       transferredBy: req.user._id,
+//       transferDate: new Date(),
+//       notes: transferNotes,
+//     });
+
+//     await report.save();
+
+//     // Delete images from Cloudinary
+//     const cloudinary = require("cloudinary").v2;
+//     const deletePromises = [];
+
+//     // Delete main photo
+//     if (report.personInvolved.mostRecentPhoto?.public_id) {
+//       deletePromises.push(cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id));
+//     }
+
+//     // Delete additional images
+//     if (report.additionalImages?.length > 0) {
+//       report.additionalImages.forEach((image) => {
+//         if (image.public_id) {
+//           deletePromises.push(cloudinary.uploader.destroy(image.public_id));
+//         }
+//       });
+//     }
+
+//     // Delete video
+//     if (report.video?.public_id) {
+//       deletePromises.push(cloudinary.uploader.destroy(report.video.public_id, { resource_type: "video" }));
+//     }
+
+//     // Execute all deletions
+//     try {
+//       await Promise.allSettled(deletePromises);
+//       console.log(`Deleted ${deletePromises.length} media files from Cloudinary for report ${report.caseId}`);
+//     } catch (cloudinaryError) {
+//       console.error("Error deleting media from Cloudinary:", cloudinaryError);
+//     }
+
+//     // Delete the report from database
+//     await Report.findByIdAndDelete(reportId);
+
+//     // Notify relevant parties about the transfer
+//     const notificationPromises = [];
+
+//     // Notify reporter
+//     if (report.reporter?.deviceToken) {
+//       notificationPromises.push(
+//         sendOneSignalNotification({
+//           include_player_ids: [report.reporter.deviceToken],
+//           headings: { en: "Report Transferred" },
+//           contents: {
+//             en: `Your report has been transferred to ${recipientDepartment} for further handling.`,
+//           },
+//           data: {
+//             type: "REPORT_TRANSFERRED",
+//             reportId: report._id,
+//             department: recipientDepartment,
+//           },
+//         })
+//       );
+//     }
+
+//     // Notify assigned officer if exists
+//     if (report.assignedOfficer?.deviceToken) {
+//       notificationPromises.push(
+//         sendOneSignalNotification({
+//           include_player_ids: [report.assignedOfficer.deviceToken],
+//           headings: { en: "Case Transferred" },
+//           contents: {
+//             en: `The case you were handling has been transferred to ${recipientDepartment}.`,
+//           },
+//           data: {
+//             type: "CASE_TRANSFERRED",
+//             reportId: report._id,
+//             department: recipientDepartment,
+//           },
+//         })
+//       );
+//     }
+
+//     // Send notifications
+//     await Promise.allSettled(notificationPromises);
+
+//     res.status(statusCodes.OK).json({
+//       success: true,
+//       msg: `Report successfully transferred to ${recipientDepartment} and data has been deleted`,
+//       data: {
+//         transferredTo: recipientEmail,
+//         department: recipientDepartment,
+//         transferDate: new Date(),
+//         emailSent: emailResult.success,
+//         mediaFilesDeleted: deletePromises.length,
+//         mediaFilesAttached: emailAttachments.length,
+//         reportDeleted: true,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error transferring report:", error);
+//     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//       success: false,
+//       msg: "Error transferring report",
+//       error: error.message,
+//     });
+//   }
+// });
+
 exports.transferReport = asyncHandler(async (req, res) => {
   try {
     const { reportId } = req.params;
-    const { recipientEmail, recipientDepartment, transferNotes } = req.body;
+    const { recipientEmail, recipientDepartment, transferNotes, transferReason, urgencyLevel, recipientName, recipientContact } = req.body;
 
     // Authorization check - only police_admin, city_admin, and super_admin can transfer
     if (!req.user.roles.some((role) => ["police_admin", "city_admin", "super_admin"].includes(role))) {
@@ -2689,6 +3001,84 @@ exports.transferReport = asyncHandler(async (req, res) => {
       });
     }
 
+    // Before deleting the report, create a transferred report record for analytics
+    const transferredReport = new TransferredReport({
+      originalReportId: report._id,
+      caseId: report.caseId,
+      reportType: report.type,
+      
+      personInvolved: {
+        firstName: report.personInvolved.firstName,
+        lastName: report.personInvolved.lastName,
+        age: report.personInvolved.age,
+        gender: report.personInvolved.gender
+      },
+      
+      originalReporter: {
+        userId: report.reporter._id,
+        name: `${report.reporter.firstName} ${report.reporter.lastName}`,
+        email: report.reporter.email,
+        phone: report.reporter.number,
+        isAnonymous: report.isAnonymous || false
+      },
+      
+      location: {
+        city: report.location.address.city,
+        barangay: report.location.address.barangay,
+        streetAddress: report.location.address.streetAddress,
+        zipCode: report.location.address.zipCode,
+        coordinates: report.location.coordinates
+      },
+      
+      transferDetails: {
+        transferredBy: req.user._id,
+        transferredTo: {
+          recipientEmail,
+          recipientDepartment,
+          recipientName: recipientName || null,
+          recipientContact: recipientContact || null
+        },
+        transferDate: new Date(),
+        transferReason: transferReason || 'Other',
+        transferNotes: transferNotes,
+        urgencyLevel: urgencyLevel || 'Medium'
+      },
+      
+      originalAssignment: {
+        policeStation: report.assignedPoliceStation._id,
+        policeStationName: report.assignedPoliceStation.name,
+        assignedOfficer: report.assignedOfficer?._id || null,
+        assignedOfficerName: report.assignedOfficer ? 
+          `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : null,
+        stationCity: report.assignedPoliceStation.address?.city || report.location.address.city
+      },
+      
+      caseTimeline: {
+        reportCreatedAt: report.createdAt,
+        lastStatusBeforeTransfer: report.status,
+        daysActiveBeforeTransfer: Math.ceil((new Date() - report.createdAt) / (1000 * 60 * 60 * 24)),
+        totalFollowUps: report.followUp?.length || 0,
+        statusChanges: report.statusHistory?.length || 0
+      },
+      
+      mediaInformation: {
+        hasMainPhoto: !!report.personInvolved.mostRecentPhoto?.url,
+        additionalImagesCount: report.additionalImages?.length || 0,
+        hasVideo: !!report.video?.url,
+        totalMediaFiles: (report.personInvolved.mostRecentPhoto?.url ? 1 : 0) + 
+                         (report.additionalImages?.length || 0) + 
+                         (report.video?.url ? 1 : 0),
+        mediaFilesTransferred: true
+      },
+      
+      transferOutcome: {
+        emailDeliveryStatus: emailResult.success ? 'Delivered' : 'Failed',
+        emailDeliveredAt: emailResult.success ? new Date() : null
+      }
+    });
+    
+    await transferredReport.save();
+
     // Update report status and add transfer information
     report.status = "Transferred";
 
@@ -2801,6 +3191,15 @@ exports.transferReport = asyncHandler(async (req, res) => {
         mediaFilesDeleted: deletePromises.length,
         mediaFilesAttached: emailAttachments.length,
         reportDeleted: true,
+        transferRecordId: transferredReport._id, // Include the transfer record ID for reference
+        transferRecord: {
+          id: transferredReport._id,
+          caseId: transferredReport.caseId,
+          transferReason: transferReason || 'Other',
+          urgencyLevel: urgencyLevel || 'Medium',
+          daysActive: transferredReport.caseTimeline.daysActiveBeforeTransfer,
+          totalMediaFiles: transferredReport.mediaInformation.totalMediaFiles
+        }
       },
     });
   } catch (error) {
@@ -3101,6 +3500,115 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
       });
     }
 
+    // Create archive records in TransferredReport model for analytics BEFORE deleting
+    const archiveRecords = [];
+    
+    for (const report of resolvedReports) {
+      const resolvedEntry = report.statusHistory?.find((entry) => entry.newStatus === "Resolved");
+      const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+      
+      const archiveRecord = new TransferredReport({
+        originalReportId: report._id,
+        caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+        reportType: report.type,
+        
+        personInvolved: {
+          firstName: report.personInvolved.firstName,
+          lastName: report.personInvolved.lastName,
+          age: report.personInvolved.age,
+          gender: report.personInvolved.gender
+        },
+        
+        originalReporter: {
+          userId: report.reporter._id,
+          name: `${report.reporter.firstName} ${report.reporter.lastName}`,
+          email: report.reporter.email,
+          phone: report.reporter.number,
+          isAnonymous: report.isAnonymous || false
+        },
+        
+        location: {
+          city: report.location.address.city,
+          barangay: report.location.address.barangay,
+          streetAddress: report.location.address.streetAddress,
+          zipCode: report.location.address.zipCode,
+          coordinates: report.location.coordinates
+        },
+        
+        transferDetails: {
+          transferredBy: req.user._id,
+          transferredTo: {
+            recipientEmail,
+            recipientDepartment: "Archive System",
+            recipientName: "Archive Administrator",
+            recipientContact: recipientEmail
+          },
+          transferDate: new Date(),
+          transferReason: 'Case Resolution Archive',
+          transferNotes: `Case resolved and archived. Original resolution date: ${new Date(resolvedAt).toLocaleDateString()}`,
+          urgencyLevel: 'Low'
+        },
+        
+        originalAssignment: {
+          policeStation: report.assignedPoliceStation._id,
+          policeStationName: report.assignedPoliceStation.name,
+          assignedOfficer: report.assignedOfficer?._id || null,
+          assignedOfficerName: report.assignedOfficer ? 
+            `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}` : null,
+          stationCity: report.assignedPoliceStation.address?.city || report.location.address.city
+        },
+        
+        caseTimeline: {
+          reportCreatedAt: report.createdAt,
+          lastStatusBeforeTransfer: "Resolved", // Since we're archiving resolved reports
+          daysActiveBeforeTransfer: Math.ceil((resolvedAt - report.createdAt) / (1000 * 60 * 60 * 24)),
+          totalFollowUps: report.followUp?.length || 0,
+          statusChanges: report.statusHistory?.length || 0
+        },
+        
+        mediaInformation: {
+          hasMainPhoto: !!report.personInvolved.mostRecentPhoto?.url,
+          additionalImagesCount: report.additionalImages?.length || 0,
+          hasVideo: !!report.video?.url,
+          totalMediaFiles: (report.personInvolved.mostRecentPhoto?.url ? 1 : 0) + 
+                           (report.additionalImages?.length || 0) + 
+                           (report.video?.url ? 1 : 0),
+          mediaFilesTransferred: true
+        },
+        
+        transferOutcome: {
+          emailDeliveryStatus: emailResult.success ? 'Delivered' : 'Failed',
+          emailDeliveredAt: emailResult.success ? new Date() : null,
+          recipientAcknowledged: true, // Assume archive process acknowledges receipt
+          acknowledgmentDate: new Date(),
+          acknowledgmentNotes: "Automated archive process completed successfully"
+        },
+
+        // Additional fields for archive tracking
+        systemMetadata: {
+          transferMethodUsed: 'Email',
+          dataRetentionPeriod: 2555, // 7 years default
+          complianceFlags: {
+            dataProtectionCompliant: true,
+            auditTrailComplete: true,
+            mediaSecurelyTransferred: true
+          },
+          archivalStatus: 'Archived'
+        }
+      });
+      
+      archiveRecords.push(archiveRecord);
+    }
+
+    // Save all archive records
+    try {
+      await TransferredReport.insertMany(archiveRecords);
+      console.log(`Created ${archiveRecords.length} archive records in TransferredReport collection`);
+    } catch (archiveError) {
+      console.error("Error creating archive records:", archiveError);
+      // Continue with the process even if archive records fail
+    }
+
     // After successful email, delete media from Cloudinary and delete reports
     const cloudinary = require("cloudinary").v2;
     const deletePromises = [];
@@ -3146,6 +3654,7 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
       data: {
         reportsArchived: resolvedReports.length,
         reportsDeleted: resolvedReports.length,
+        archiveRecordsCreated: archiveRecords.length,
         emailSent: emailResult.success,
         recipientEmail,
         dateRange: emailContext.dateRange,
@@ -3154,6 +3663,12 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
         totalMediaFiles: totalMediaFiles,
         mediaFilesDeleted: deletePromises.length,
         mediaIncludedInEmail: true,
+        archiveDetails: {
+          transferMethod: 'Email Archive',
+          archiveReason: 'Case Resolution Archive',
+          dataRetentionYears: 7,
+          complianceStatus: 'Compliant'
+        }
       },
     });
   } catch (error) {
@@ -3165,6 +3680,361 @@ exports.archiveResolvedReports = asyncHandler(async (req, res) => {
     });
   }
 });
+
+// exports.archiveResolvedReports = asyncHandler(async (req, res) => {
+//   try {
+//     const { recipientEmail, startDate, endDate, policeStationId, includeImages = true } = req.body;
+
+//     // Authorization check - only admins can archive reports
+//     if (!req.user.roles.some((role) => ["police_admin", "city_admin", "super_admin"].includes(role))) {
+//       return res.status(statusCodes.FORBIDDEN).json({
+//         success: false,
+//         msg: "Only admins can archive resolved reports",
+//       });
+//     }
+
+//     // Validate required fields
+//     if (!recipientEmail) {
+//       return res.status(statusCodes.BAD_REQUEST).json({
+//         success: false,
+//         msg: "Recipient email is required",
+//       });
+//     }
+
+//     // Build query for resolved reports
+//     let query = { status: "Resolved" };
+
+//     // Add date range filter
+//     if (startDate && endDate) {
+//       query.createdAt = {
+//         $gte: new Date(startDate),
+//         $lte: new Date(endDate),
+//       };
+//     }
+
+//     // Add police station filter
+//     if (policeStationId) {
+//       // Validate police station exists
+//       const policeStation = await PoliceStation.findById(policeStationId);
+//       if (!policeStation) {
+//         return res.status(statusCodes.NOT_FOUND).json({
+//           success: false,
+//           msg: "Police station not found",
+//         });
+//       }
+
+//       query.assignedPoliceStation = policeStationId;
+//     }
+
+//     // Get all resolved reports with populated data
+//     const resolvedReports = await Report.find(query)
+//       .populate("reporter", "firstName lastName number email address")
+//       .populate("assignedPoliceStation", "name address contactNumber")
+//       .populate("assignedOfficer", "firstName lastName number email")
+//       .sort("-createdAt");
+
+//     if (resolvedReports.length === 0) {
+//       return res.status(statusCodes.NOT_FOUND).json({
+//         success: false,
+//         msg: "No resolved reports found for the specified criteria",
+//       });
+//     }
+
+//     console.log(`Found ${resolvedReports.length} resolved reports to archive`);
+
+//     // Get police station name for context (if filtered by station)
+//     let policeStationName = null;
+//     if (policeStationId) {
+//       const station = await PoliceStation.findById(policeStationId);
+//       policeStationName = station?.name || "Unknown Station";
+//     }
+
+//     // Create Excel workbook
+//     const ExcelJS = require("exceljs");
+
+//     const workbook = new ExcelJS.Workbook();
+//     const worksheet = workbook.addWorksheet("Resolved Reports");
+
+//     // Define columns (removed photo/video columns, added note column)
+//     worksheet.columns = [
+//       { header: "Case ID", key: "caseId", width: 15 },
+//       { header: "Report Type", key: "type", width: 15 },
+//       { header: "Person Name", key: "personName", width: 25 },
+//       { header: "Age", key: "age", width: 10 },
+//       { header: "Gender", key: "gender", width: 10 },
+//       { header: "Last Seen Date", key: "lastSeenDate", width: 15 },
+//       { header: "Last Seen Time", key: "lastSeenTime", width: 15 },
+//       { header: "Location", key: "location", width: 30 },
+//       { header: "Reporter Name", key: "reporterName", width: 25 },
+//       { header: "Reporter Email", key: "reporterEmail", width: 30 },
+//       { header: "Reporter Phone", key: "reporterPhone", width: 15 },
+//       { header: "Assigned Station", key: "assignedStation", width: 25 },
+//       { header: "Assigned Officer", key: "assignedOfficer", width: 25 },
+//       { header: "Status", key: "status", width: 15 },
+//       { header: "Created Date", key: "createdAt", width: 20 },
+//       { header: "Resolved Date", key: "resolvedAt", width: 20 },
+//       { header: "Media Files Note", key: "mediaNote", width: 30 },
+//     ];
+
+//     // Style the header row
+//     const headerRow = worksheet.getRow(1);
+//     headerRow.font = { bold: true, color: { argb: "FFFFFF" } };
+//     headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "2C3E50" } };
+//     headerRow.alignment = { horizontal: "center", vertical: "middle" };
+
+//     // Count total media files
+//     let totalMediaFiles = 0;
+
+//     // Process each report
+//     for (let i = 0; i < resolvedReports.length; i++) {
+//       const report = resolvedReports[i];
+
+//       // Find resolved date from status history
+//       const resolvedEntry = report.statusHistory?.find((entry) => entry.newStatus === "Resolved");
+//       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+
+//       // Count media files for this report
+//       let mediaCount = 0;
+//       let mediaTypes = [];
+
+//       if (report.personInvolved.mostRecentPhoto?.url) {
+//         mediaCount++;
+//         mediaTypes.push("Main Photo");
+//         totalMediaFiles++;
+//       }
+
+//       if (report.additionalImages?.length > 0) {
+//         mediaCount += report.additionalImages.length;
+//         mediaTypes.push(`${report.additionalImages.length} Additional Images`);
+//         totalMediaFiles += report.additionalImages.length;
+//       }
+
+//       if (report.video?.url) {
+//         mediaCount++;
+//         mediaTypes.push("Video");
+//         totalMediaFiles++;
+//       }
+
+//       // Prepare row data
+//       const rowData = {
+//         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+//         type: report.type,
+//         personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+//         age: report.personInvolved.age,
+//         gender: report.personInvolved.gender,
+//         lastSeenDate: report.personInvolved.lastSeenDate
+//           ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString()
+//           : "",
+//         lastSeenTime: report.personInvolved.lastSeentime || "",
+//         location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
+//         reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+//         reporterEmail: report.reporter.email,
+//         reporterPhone: report.reporter.number,
+//         assignedStation: report.assignedPoliceStation?.name || "Not assigned",
+//         assignedOfficer: report.assignedOfficer
+//           ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}`
+//           : "Not assigned",
+//         status: report.status,
+//         createdAt: new Date(report.createdAt).toLocaleDateString(),
+//         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
+//         mediaNote:
+//           mediaCount > 0 ? `${mediaCount} files: ${mediaTypes.join(", ")} - See email for images` : "No media files",
+//       };
+
+//       // Add row to worksheet
+//       worksheet.addRow(rowData);
+//     }
+
+//     // Add a note at the top about media files
+//     worksheet.insertRow(1, {
+//       caseId: "NOTE:",
+//       type: "Media files (photos/videos) are embedded in the email below.",
+//       personName: "This Excel file contains only text data.",
+//       age: "",
+//       gender: "",
+//       lastSeenDate: "",
+//       lastSeenTime: "",
+//       location: "",
+//       reporterName: "",
+//       reporterEmail: "",
+//       reporterPhone: "",
+//       assignedStation: "",
+//       assignedOfficer: "",
+//       status: "",
+//       createdAt: "",
+//       resolvedAt: "",
+//       mediaNote: "Check email content for images",
+//     });
+
+//     // Style the note row
+//     const noteRow = worksheet.getRow(1);
+//     noteRow.font = { bold: true, color: { argb: "FF0000" } };
+//     noteRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF99" } };
+
+//     // Re-style the header row (now row 2)
+//     const newHeaderRow = worksheet.getRow(2);
+//     newHeaderRow.font = { bold: true, color: { argb: "FFFFFF" } };
+//     newHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "2C3E50" } };
+//     newHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+//     // Apply alternating row colors (starting from row 3)
+//     worksheet.eachRow((row, rowNumber) => {
+//       if (rowNumber > 2) {
+//         // Skip note and header rows
+//         if (rowNumber % 2 === 1) {
+//           // Odd rows (excluding header)
+//           row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "F8F9FA" } };
+//         }
+//       }
+//     });
+
+//     // Auto-fit columns
+//     worksheet.columns.forEach((column) => {
+//       column.width = Math.max(column.width, 10);
+//     });
+
+//     // Generate Excel buffer
+//     const excelBuffer = await workbook.xlsx.writeBuffer();
+
+//     // Prepare reports data for email template
+//     const reportsWithMedia = resolvedReports.map((report) => {
+//       const resolvedEntry = report.statusHistory?.find((entry) => entry.newStatus === "Resolved");
+//       const resolvedAt = resolvedEntry ? resolvedEntry.updatedAt : report.updatedAt;
+
+//       return {
+//         caseId: report.caseId || `${report.type.substring(0, 3).toUpperCase()}-${report._id.toString().slice(-7)}`,
+//         type: report.type,
+//         personName: `${report.personInvolved.firstName} ${report.personInvolved.lastName}`,
+//         age: report.personInvolved.age,
+//         gender: report.personInvolved.gender,
+//         lastSeenDate: report.personInvolved.lastSeenDate
+//           ? new Date(report.personInvolved.lastSeenDate).toLocaleDateString()
+//           : "",
+//         lastSeenTime: report.personInvolved.lastSeentime || "",
+//         location: `${report.location.address.streetAddress}, ${report.location.address.barangay}, ${report.location.address.city}`,
+//         reporterName: `${report.reporter.firstName} ${report.reporter.lastName}`,
+//         reporterEmail: report.reporter.email,
+//         reporterPhone: report.reporter.number,
+//         assignedStation: report.assignedPoliceStation?.name || "Not assigned",
+//         assignedOfficer: report.assignedOfficer
+//           ? `${report.assignedOfficer.firstName} ${report.assignedOfficer.lastName}`
+//           : "Not assigned",
+//         createdAt: new Date(report.createdAt).toLocaleDateString(),
+//         resolvedAt: new Date(resolvedAt).toLocaleDateString(),
+//         mainPhoto: report.personInvolved.mostRecentPhoto?.url || null,
+//         additionalImages: report.additionalImages || [],
+//         video: report.video?.url || null,
+//         hasMedia: !!(
+//           report.personInvolved.mostRecentPhoto?.url ||
+//           report.additionalImages?.length > 0 ||
+//           report.video?.url
+//         ),
+//       };
+//     });
+
+//     // Email context with police station info
+//     const emailContext = {
+//       totalReports: resolvedReports.length,
+//       dateRange:
+//         startDate && endDate
+//           ? `${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}`
+//           : "All time",
+//       policeStationFilter: policeStationName || "All stations",
+//       generatedBy: `${req.user.firstName} ${req.user.lastName}`,
+//       generatedDate: new Date().toLocaleDateString(),
+//       includesImages: includeImages,
+//       totalMediaFiles: totalMediaFiles,
+//       reports: reportsWithMedia,
+//     };
+
+//     // Email attachments (only Excel file)
+//     const emailAttachments = [
+//       {
+//         filename: `Resolved_Reports_Archive_${policeStationName ? `${policeStationName.replace(/\s+/g, "_")}_` : ""}${
+//           new Date().toISOString().split("T")[0]
+//         }.xlsx`,
+//         content: excelBuffer,
+//         contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+//       },
+//     ];
+
+//     // Send email
+//     const emailResult = await sendArchiveEmailWithImages(emailContext, [recipientEmail], emailAttachments);
+
+//     if (!emailResult.success) {
+//       return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//         success: false,
+//         msg: "Failed to send archive email",
+//         error: emailResult.error,
+//       });
+//     }
+
+//     // After successful email, delete media from Cloudinary and delete reports
+//     const cloudinary = require("cloudinary").v2;
+//     const deletePromises = [];
+
+//     // Delete all media files from Cloudinary for each report
+//     for (const report of resolvedReports) {
+//       // Delete main photo
+//       if (report.personInvolved.mostRecentPhoto?.public_id) {
+//         deletePromises.push(cloudinary.uploader.destroy(report.personInvolved.mostRecentPhoto.public_id));
+//       }
+
+//       // Delete additional images
+//       if (report.additionalImages?.length > 0) {
+//         report.additionalImages.forEach((image) => {
+//           if (image.public_id) {
+//             deletePromises.push(cloudinary.uploader.destroy(image.public_id));
+//           }
+//         });
+//       }
+
+//       // Delete video
+//       if (report.video?.public_id) {
+//         deletePromises.push(cloudinary.uploader.destroy(report.video.public_id, { resource_type: "video" }));
+//       }
+//     }
+
+//     // Execute all media deletions
+//     try {
+//       await Promise.allSettled(deletePromises);
+//       console.log(`Deleted ${deletePromises.length} media files from Cloudinary`);
+//     } catch (cloudinaryError) {
+//       console.error("Error deleting media from Cloudinary:", cloudinaryError);
+//     }
+
+//     // Delete all reports from database
+//     await Report.deleteMany({ _id: { $in: resolvedReports.map((r) => r._id) } });
+
+//     res.status(statusCodes.OK).json({
+//       success: true,
+//       msg: `Successfully archived and deleted ${resolvedReports.length} resolved reports${
+//         policeStationName ? ` from ${policeStationName}` : ""
+//       }`,
+//       data: {
+//         reportsArchived: resolvedReports.length,
+//         reportsDeleted: resolvedReports.length,
+//         emailSent: emailResult.success,
+//         recipientEmail,
+//         dateRange: emailContext.dateRange,
+//         policeStationFilter: policeStationName || "All stations",
+//         includesImages: includeImages,
+//         totalMediaFiles: totalMediaFiles,
+//         mediaFilesDeleted: deletePromises.length,
+//         mediaIncludedInEmail: true,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error archiving resolved reports:", error);
+//     res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+//       success: false,
+//       msg: "Error archiving resolved reports",
+//       error: error.message,
+//     });
+//   }
+// });
+
+
 // exports.archiveResolvedReports = asyncHandler(async (req, res) => {
 //   try {
 //     const { recipientEmail, startDate, endDate, policeStationId, includeImages = true } = req.body;

@@ -3,6 +3,7 @@ const User = require('../models/userModel');
 const PoliceStation = require('../models/policeStationModel');
 const asyncHandler = require('express-async-handler');
 const statusCodes = require('../constants/statusCodes');
+const transferredReportModel = require('../models/transferredReportModel');
 
 // Insomnia Sample Requests for Demographics Analysis API/
 // Base URL
@@ -24,6 +25,34 @@ const statusCodes = require('../constants/statusCodes');
 // 8. Combined filters
 // http://localhost:3000/api/v1/charts/demographics?ageCategory=adult&city=SampleCity&policeStationId=12345&startDate=2023-01-01&endDate=2023-12-31&reportType=missing
 
+
+// Get transfer statistics
+exports.getTransferAnalytics = asyncHandler(async (req, res) => {
+  try {
+    const { startDate, endDate, groupBy = 'month' } = req.query;
+    
+    const stats = await TransferredReport.getTransferStatsByPeriod(
+      startDate || new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // Default: last year
+      endDate || new Date(),
+      groupBy
+    );
+
+    const topReasons = await transferredReportModel.getTopTransferReasons();
+
+    res.status(statusCodes.OK).json({
+      success: true,
+      data: {
+        transferTrends: stats,
+        topTransferReasons: topReasons
+      }
+    });
+  } catch (error) {
+    res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 // User Demographics Analysis with age categories
 exports.getUserDemographicsAnalysis = asyncHandler(async (req, res) => {
@@ -438,12 +467,12 @@ exports.getOfficerRankings = asyncHandler(async (req, res) => {
   try {
     // Access control
     const userRole = req.user.roles[0];
-    if (userRole === 'user' || userRole === 'police_officer') {
-      return res.status(statusCodes.FORBIDDEN).json({
-        success: false,
-        message: 'Access denied'
-      });
-    }
+    // if (userRole === 'user' || userRole === 'police_officer') {
+    //   return res.status(statusCodes.FORBIDDEN).json({
+    //     success: false,
+    //     message: 'Access denied'
+    //   });
+    // }
 
     // Dynamic filters
     const {
