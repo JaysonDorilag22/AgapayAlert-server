@@ -1157,14 +1157,37 @@ exports.getReports = asyncHandler(async (req, res) => {
       sortOrder = 'desc'
     } = req.query;
 
+    console.log("=== EXTRACTED FILTERS ===");
+    console.log("Status filter:", status);
+    console.log("Report type filter:", reportType);
+    console.log("Date range:", { startDate, endDate });
+    console.log("Location filters:", { city, barangay, policeStationId });
+    console.log("Other filters:", { ageCategory, gender, searchQuery });
+    console.log("Pagination:", { page, limit, sortBy, sortOrder });
+
     const currentPage = parseInt(page);
     const limitPerPage = parseInt(limit);
 
     // Build dynamic match stage for aggregation
     let matchStage = {};
 
-    if (status) matchStage.status = status;
-    if (reportType) matchStage.type = reportType;
+    // Handle comma-separated status values
+    if (status) {
+      if (status.includes(',')) {
+        matchStage.status = { $in: status.split(',') };
+      } else {
+        matchStage.status = status;
+      }
+    }
+    
+    // Handle comma-separated report type values
+    if (reportType) {
+      if (reportType.includes(',')) {
+        matchStage.type = { $in: reportType.split(',') };
+      } else {
+        matchStage.type = reportType;
+      }
+    }
     if (startDate || endDate) {
       matchStage.createdAt = {};
       if (startDate) matchStage.createdAt.$gte = new Date(startDate);
@@ -1255,6 +1278,9 @@ if (city) {
       }
     }
     // super_admin: no restriction
+
+    console.log("=== FINAL MATCH STAGE ===");
+    console.log("Match stage query:", JSON.stringify(matchStage, null, 2));
 
     // Aggregation pipeline for population and sorting
     const pipeline = [
@@ -1360,6 +1386,11 @@ if (city) {
     // Get total count for pagination
     const total = await Report.countDocuments(matchStage);
 
+    console.log("=== QUERY RESULTS ===");
+    console.log("Reports found:", reports.length);
+    console.log("Total matching documents:", total);
+    console.log("Sample report IDs:", reports.slice(0, 3).map(r => r._id));
+
     res.status(statusCodes.OK).json({
       success: true,
       data: {
@@ -1370,16 +1401,16 @@ if (city) {
         hasMore: currentPage * limitPerPage < total,
         filters: {
           applied: {
-            status,
-            reportType,
-            startDate,
-            endDate,
-            ageCategory,
-            city,
-            barangay,
-            policeStationId,
-            gender,
-            searchQuery
+            status: status || null,
+            reportType: reportType || null,
+            startDate: startDate || null,
+            endDate: endDate || null,
+            ageCategory: ageCategory || null,
+            city: city || null,
+            barangay: barangay || null,
+            policeStationId: policeStationId || null,
+            gender: gender || null,
+            searchQuery: searchQuery || null
           },
           sortBy,
           sortOrder
